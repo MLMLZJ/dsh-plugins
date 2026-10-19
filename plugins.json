@@ -1,4 +1,4 @@
-﻿{
+{
   "generated": "2026-10-19",
   "description": "Index of DeepSeek Harness plugin bundles for Windows software analysis.",
   "plugins": [
@@ -8,7 +8,7 @@
       "repo": "https://github.com/MLMLZJ/dsh-install-profiler",
       "rowId": "install-profiler",
       "skill": "install-profiler",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "scriptCount": 9,
       "platform": "windows",
       "summary": "Installer profiling, binary strings evidence, dynamic probe plan, snapshot diffing, reverse-engineering handoff."
