@@ -8,7 +8,7 @@
       "repo": "https://github.com/MLMLZJ/dsh-install-profiler",
       "rowId": "install-profiler",
       "skill": "install-profiler",
-      "version": "1.4.3",
+      "version": "1.4.4",
       "scriptCount": 9,
       "platform": "windows",
       "summary": "Installer profiling, binary strings evidence, dynamic probe plan, snapshot diffing, reverse-engineering handoff."
