@@ -1,0 +1,28 @@
+{
+  "generated": "2026-10-19",
+  "description": "Index of DeepSeek Harness plugin bundles for Windows software analysis.",
+  "plugins": [
+    {
+      "name": "install-profiler",
+      "package": "@local/dsh-install-profiler",
+      "repo": "https://github.com/MLMLZJ/dsh-install-profiler",
+      "rowId": "install-profiler",
+      "skill": "install-profiler",
+      "version": "1.3.0",
+      "scriptCount": 9,
+      "platform": "windows",
+      "summary": "Installer profiling, binary strings evidence, dynamic probe plan, snapshot diffing, reverse-engineering handoff."
+    },
+    {
+      "name": "reverse-skill",
+      "package": "@local/dsh-reverse-skill",
+      "repo": "https://github.com/MLMLZJ/dsh-reverse-skill",
+      "rowId": "reverse-skill",
+      "skill": "reverse-engineering",
+      "version": "1.0.0",
+      "scriptCount": 1,
+      "platform": "windows",
+      "summary": "Static-first reverse engineering across APK/JAR/native/.NET/Electron/firmware with an authorization gate."
+    }
+  ]
+}
