@@ -68,7 +68,7 @@ dsh plugin --profile web remove dsh-relay-balance   # 卸载
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `apiBaseUrl` | `https://api.keketoken.com` | 你的中转站地址，**请改成自己的** |
+| `apiBaseUrl` | 空 | 插件级默认站点地址；留空即可，日常在设置页里填（见下） |
 | `quotaPerUnit` | `500000` | new-api 的配额换算单位，即 1 个货币单位等于多少 quota |
 | `refreshMs` | `60000` | 后台刷新间隔 |
 | `timeoutMs` | `15000` | 单个请求超时 |
@@ -77,6 +77,7 @@ dsh plugin --profile web remove dsh-relay-balance   # 卸载
 
 | 字段 | 用途 |
 | --- | --- |
+| `apiBaseUrl` | 中转站地址，例如 `https://relay.example.com`。**必填**；填在设置页里，优先于插件 Config |
 | `apiKey` | 读用量，`/v1/dashboard/billing/usage`。留空则回落到 DSH 里已配置的 `DEEPSEEK_CLASH_API_KEY` |
 | `cookie` | 读余额，站点 `session` 值（登录后 F12 → Application → Cookies） |
 | `accessToken` | 读余额的另一种方式：站点「个人设置 → 系统访问令牌」 |
@@ -113,6 +114,7 @@ dsh plugin --profile web remove dsh-relay-balance   # 卸载
 | 现象 | 处理 |
 | --- | --- |
 | 改了样式但界面没变 | 客户端模块按内容哈希缓存，按 **Ctrl+Shift+R** 硬刷新 |
+| 卡片显示「还没有填写中转站地址」 | 到设置页填你的中转站地址（`https://…`） |
 | 余额显示「未配置」 | 没填 `cookie` 或 `accessToken`，二者任一即可 |
 | 余额数字不对 | 站点 `quotaPerUnit` 不是 500000，在设置页覆盖该值 |
 | 卡片没有玻璃效果 | 设置页「运行环境」里看 `毛玻璃` / `折射` 两个标签：`无折射` 表示当前内核不支持 SVG 位移滤镜 |

@@ -17,19 +17,19 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-export const name = '@local/dsh-relay-balance'
+export const name = 'dsh-relay-balance'
 export const inject = ['webServer', 'credentials']
 
 const DEFAULTS = {
-  apiBaseUrl: 'https://api.keketoken.com',
+  apiBaseUrl: '',
   quotaPerUnit: 500000,
   refreshMs: 60000,
   timeoutMs: 15000,
 }
 
-const CREDENTIAL_FIELDS = ['apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']
+const CREDENTIAL_FIELDS = ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']
 const MAX_BODY_BYTES = 16 * 1024
-const PLUGIN_VERSION = '2.0.0'
+const PLUGIN_VERSION = '3.4.0'
 
 function stateRoot() {
   const home = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ''
@@ -39,7 +39,7 @@ function stateRoot() {
 }
 
 function baseUrlOf(value) {
-  return String(value || DEFAULTS.apiBaseUrl).trim().replace(/\/+$/, '')
+  return String(value == null ? '' : value).trim().replace(/\/+$/, '')
 }
 
 function isLoopback(req) {
@@ -116,6 +116,11 @@ export function apply(ctx, config = {}) {
   const credentialPath = join(root, 'credential.json')
 
   let credential = {}
+
+  /** Relay origin: the value saved in Settings beats the plugin Config. */
+  function relayBase() {
+    return baseUrlOf(credential.apiBaseUrl) || baseUrlOf(settings.apiBaseUrl)
+  }
   let snapshot = { status: 'loading', updatedAt: null }
   let refreshedAt = 0
   let inFlight = null
@@ -236,6 +241,7 @@ export function apply(ctx, config = {}) {
 
   async function credentialView() {
     return {
+      apiBaseUrl: relayBase(),
       hasApiKey: (await apiKeyOf()) !== '',
       hasStoredApiKey: typeof credential.apiKey === 'string' && credential.apiKey.trim() !== '',
       hasCookie: typeof credential.cookie === 'string' && credential.cookie.trim() !== '',
@@ -248,11 +254,29 @@ export function apply(ctx, config = {}) {
 
   async function refresh() {
     if (inFlight) return inFlight
-    const base = baseUrlOf(settings.apiBaseUrl)
+    const base = relayBase()
     inFlight = (async () => {
       const errors = []
       let usage = null
       let balance = null
+      if (base === '') {
+        const officialOnly = await fetchOfficial()
+        refreshedAt = Date.now()
+        snapshot = {
+          status: 'idle',
+          missing: { apiBaseUrl: true, apiKey: true, session: true },
+          currency: typeof credential.currency === 'string' ? credential.currency : (typeof settings.currency === 'string' ? settings.currency : ''),
+          official: officialOnly,
+          apiBaseUrl: '',
+          usage: null,
+          balance: null,
+          credential: await credentialView(),
+          updatedAt: refreshedAt,
+          error: null,
+          errors,
+        }
+        return snapshot
+      }
       try {
         const usageResult = await fetchUsage(base)
         if (usageResult.state === 'ok') usage = usageResult.usage
@@ -353,6 +377,9 @@ export function apply(ctx, config = {}) {
             let text = String(value).trim()
             if (text.toLowerCase().startsWith('cookie:')) text = text.slice(7).trim()
             if (field === 'cookie' && text !== '' && !text.includes('=')) text = `session=${text}`
+            if (field === 'apiBaseUrl' && text !== '' && !/^https?:\/\//i.test(text)) {
+              throw new Error('BASE_URL_INVALID')
+            }
             if (text === '') delete next[field]
             else next[field] = text
           }
@@ -363,7 +390,10 @@ export function apply(ctx, config = {}) {
           reply(res, 200, { saved: true, credential: await credentialView() })
         } catch (error) {
           const code = String((error && error.message) || error)
-          reply(res, 400, { error: { code, message: code === 'BODY_NOT_JSON' ? '请求体不是 JSON' : code } })
+          const message = code === 'BODY_NOT_JSON' ? '请求体不是 JSON'
+            : code === 'BASE_URL_INVALID' ? '中转站地址需以 http:// 或 https:// 开头'
+            : code
+          reply(res, 400, { error: { code, message } })
         }
       },
     }), 'relay-balance: credential route')

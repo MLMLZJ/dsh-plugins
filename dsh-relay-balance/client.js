@@ -22,6 +22,9 @@ window.__ModuleLoader__.load({
       saved: '已保存并刷新',
       failed: '失败',
       credential: '凭证',
+      apiBaseUrl: '中转站地址',
+      apiBaseUrlHint: '例如 https://relay.example.com，不要带结尾斜杠',
+      needBase: '还没有填写中转站地址',
       apiKey: 'API Key（用量）',
       apiKeyHint: '留空则使用 DSH 里已配置的 DEEPSEEK_CLASH_API_KEY',
       cookie: '站点 Cookie（余额）',
@@ -83,6 +86,9 @@ window.__ModuleLoader__.load({
       saved: 'Saved and refreshed',
       failed: 'Failed',
       credential: 'Credentials',
+      apiBaseUrl: 'Relay address',
+      apiBaseUrlHint: 'For example https://relay.example.com, without a trailing slash',
+      needBase: 'No relay address configured yet',
       apiKey: 'API key (usage)',
       apiKeyHint: 'Leave empty to use the DEEPSEEK_CLASH_API_KEY already configured in DSH',
       cookie: 'Site cookie (balance)',
@@ -432,7 +438,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.3.0'
+    const MODULE_VERSION = '3.4.0'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
 
     function blurSupport() {
@@ -555,12 +561,13 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       if (!status || status === 'loading') return { tone: 'loading', text: t('loading') }
       if (status === 'ok') return { tone: 'ok', text: t('live') }
       if (status === 'partial') {
+        if (snapshot.missing && snapshot.missing.apiBaseUrl) return { tone: 'partial', text: t('needBase') }
         if (snapshot.missing && snapshot.missing.session) return { tone: 'partial', text: t('noSessionShort') }
         if (snapshot.missing && snapshot.missing.apiKey) return { tone: 'partial', text: t('needKey') }
         if (snapshot.error && snapshot.error.message) return { tone: 'partial', text: snapshot.error.message }
         return { tone: 'partial', text: t('partial') }
       }
-      if (status === 'idle') return { tone: 'idle', text: t('idle') }
+      if (status === 'idle') return { tone: 'idle', text: (snapshot.missing && snapshot.missing.apiBaseUrl) ? t('needBase') : t('idle') }
       if (status === 'error') return { tone: 'error', text: (snapshot.error && snapshot.error.message) || t('failed') }
       return { tone: 'idle', text: String(status) }
     }
@@ -685,7 +692,9 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 
       const alerts = []
       if (tab === 'relay') {
-        if (snapshot.missing && snapshot.missing.session && !relayBalance) {
+        if (snapshot.missing && snapshot.missing.apiBaseUrl) {
+          alerts.push(h('div', { className: 'rb-alert', key: 'base' }, t('needBase')))
+        } else if (snapshot.missing && snapshot.missing.session && !relayBalance) {
           alerts.push(h('div', { className: 'rb-alert', key: 'session' }, t('needSession')))
         }
         if (relayError) alerts.push(h('div', { className: 'rb-alert', key: 'err', 'data-kind': 'error' }, relayError))
@@ -774,7 +783,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       const t = typeof props.t === 'function' ? props.t : fallback
       const card = useCard()
       const [snapshot, setSnapshot] = React.useState({ status: 'loading', updatedAt: null })
-      const [form, setForm] = React.useState({ apiKey: '', cookie: '', accessToken: '', userId: '', quotaPerUnit: '', currency: '' })
+      const [form, setForm] = React.useState({ apiBaseUrl: '', apiKey: '', cookie: '', accessToken: '', userId: '', quotaPerUnit: '', currency: '' })
       const [busy, setBusy] = React.useState(false)
       const [notice, setNotice] = React.useState('')
 
@@ -793,10 +802,16 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       }, [load])
 
       const quotaPerUnit = snapshot.credential ? snapshot.credential.quotaPerUnit : undefined
+      const savedBase = snapshot.credential ? snapshot.credential.apiBaseUrl : ''
       React.useEffect(() => {
-        if (!quotaPerUnit) return
-        setForm((current) => (current.quotaPerUnit === '' ? { ...current, quotaPerUnit: String(quotaPerUnit) } : current))
-      }, [quotaPerUnit])
+        if (!quotaPerUnit && !savedBase) return
+        setForm((current) => {
+          const next = { ...current }
+          if (next.quotaPerUnit === '' && quotaPerUnit) next.quotaPerUnit = String(quotaPerUnit)
+          if (next.apiBaseUrl === '' && savedBase) next.apiBaseUrl = String(savedBase)
+          return next
+        })
+      }, [quotaPerUnit, savedBase])
 
       const update = (field) => (event) => {
         const value = event.target.value
@@ -808,7 +823,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         setNotice('')
         try {
           const body = {}
-          for (const field of ['apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']) {
+          for (const field of ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']) {
             const value = form[field].trim()
             if (value !== '') body[field] = value
           }
@@ -822,6 +837,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
           const next = await request('/relay-balance/refresh', { method: 'POST' })
           setSnapshot(next)
           setForm({
+            apiBaseUrl: next.credential && next.credential.apiBaseUrl ? String(next.credential.apiBaseUrl) : '',
             apiKey: '',
             cookie: '',
             accessToken: '',
@@ -937,6 +953,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         h('section', { className: 'rb-section' },
           h('div', { className: 'rb-headline' }, t('credentialSection')),
           h('div', { className: 'rb-form' },
+            field('apiBaseUrl', t('apiBaseUrl'), t('apiBaseUrlHint'), { placeholder: 'https://relay.example.com' }),
             field('apiKey', t('apiKey'), t('apiKeyHint'), { secret: true }),
             field('cookie', t('cookie'), t('cookieHint'), { secret: true }),
             field('accessToken', t('accessToken'), t('accessTokenHint'), { secret: true }),
