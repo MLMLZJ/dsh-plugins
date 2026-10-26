@@ -1,6 +1,6 @@
 {
-  "generated": "2026-10-19",
-  "description": "Index of DeepSeek Harness plugin bundles for Windows software analysis.",
+  "generated": "2026-10-26",
+  "description": "Index of DeepSeek Harness plugin bundles (Windows software analysis + a cross-platform Web-UI widget).",
   "plugins": [
     {
       "name": "install-profiler",
@@ -23,7 +23,17 @@
       "scriptCount": 1,
       "platform": "windows",
       "summary": "Static-first reverse engineering across APK/JAR/native/.NET/Electron/firmware with an authorization gate."
+    },
+    {
+      "name": "relay-balance",
+      "package": "dsh-relay-balance",
+      "repo": "https://github.com/MLMLZJ/dsh-plugins",
+      "path": "dsh-relay-balance",
+      "rowId": "relay-balance",
+      "skill": null,
+      "version": "3.3.0",
+      "platform": "any",
+      "summary": "Draggable liquid-glass card and settings page showing an OpenAI-compatible relay's used/remaining balance plus the official DeepSeek account balance; credentials stay on the host."
     }
   ]
 }
-

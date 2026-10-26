@@ -1,16 +1,19 @@
 # DSH Plugins
 
-A small, opinionated collection of **DeepSeek Harness** plugin bundles for
-Windows software analysis. Each plugin registers one model-invocable skill and
-ships the PowerShell tools that skill drives.
+A small, opinionated collection of **DeepSeek Harness** plugin bundles.
 
-中文简介：两个可独立开关的 DeepSeek Harness 插件——一个做 Windows 安装包的静态画像与动态取证，一个做本地软件的逆向与反编译。两者可以单独用，也可以串联：画像是"瞄准具"，反编译是"读代码"。
+Two of them target Windows software analysis: each registers one
+model-invocable skill and ships the PowerShell tools that skill drives. The
+third is a cross-platform Web-UI plugin and lives in this repository.
+
+中文简介：三个 DeepSeek Harness 插件——一个做 Windows 安装包的静态画像与动态取证，一个做本地软件的逆向与反编译（这两个是 skill 类，各自独立仓库）；还有一个 `relay-balance` 是界面类插件，在本仓库里，给中转站用量和余额做了一张玻璃质感的悬浮卡片。前两个可以串联：画像是"瞄准具"，反编译是"读代码"。
 
 ## Plugins
 
 | Plugin | Row id | Skill | What it does |
 |---|---|---|---|
 | [install-profiler](https://github.com/MLMLZJ/dsh-install-profiler) | `install-profiler` | `install-profiler` | Profiles a Windows installer or an installed app: install layout, registry writes, services, config files, logs, Event Log sources. Mines binaries for evidence when there is no MSI database, derives a dynamic probe plan, diffs before/after snapshots, and packages a handoff brief for the reverse-engineering skill. |
+| [relay-balance](https://github.com/MLMLZJ/dsh-plugins/tree/main/dsh-relay-balance) | `relay-balance` | — | Cross-platform Web-UI plugin (no skill, no scripts): a draggable liquid-glass card plus a settings page showing an OpenAI-compatible relay's used and remaining balance alongside the official DeepSeek account balance. Credentials stay on the host, routes are loopback-only. |
 | [reverse-skill](https://github.com/MLMLZJ/dsh-reverse-skill) | `reverse-skill` | `reverse-engineering` | Static-first reverse engineering: artifact classification (APK/AAB, JAR, native PE/ELF, .NET, Electron, firmware), decompiler toolchain probe, gated authorization, degradation when a tool is missing, evidence-tagged reporting. |
 
 ## Install
@@ -37,6 +40,22 @@ plugin_manager action=install_bundle target=C:\Tools\dsh-reverse-skill
 
 `install_bundle` links the directory rather than copying it, so **keep those
 paths in place**. A successful result reports `"application": "applied"`.
+
+### In-tree: relay-balance
+
+`relay-balance` ships inside this repository under `dsh-relay-balance/`:
+
+```powershell
+git clone https://github.com/MLMLZJ/dsh-plugins.git C:\Tools\dsh-plugins
+```
+
+```
+plugin_manager action=install_bundle target=C:\Tools\dsh-plugins\dsh-relay-balance
+```
+
+It is platform-neutral (no PowerShell, no native modules, no platform branches),
+so the same command works on Linux and macOS with a plain path such as
+`/opt/dsh-plugins/dsh-relay-balance`.
 
 ### Verify
 

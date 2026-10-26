@@ -1,0 +1,8 @@
+{
+  "meta": {
+    "title": "Relay Usage and Balance",
+    "description": "Shows a third-party relay's spent amount and remaining balance in Settings; credentials stay on this machine."
+  },
+  "nav": "Relay usage",
+  "title": "Relay usage and balance"
+}

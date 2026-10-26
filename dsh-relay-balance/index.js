@@ -1,0 +1,410 @@
+/**
+ * Host half of the relay-balance bundle.
+ *
+ * Aggregates two unrelated balance sources for the Web page:
+ *
+ * - The official DeepSeek account, through `ctx.deepseekAccount` (profile and
+ *   recharge/bonus wallets), so the page never talks to the platform directly.
+ * - A third-party OpenAI-compatible relay:
+ *     GET /v1/dashboard/billing/usage  - usage in cents of the site currency
+ *     GET /api/user/self               - new-api user record (quota/used_quota)
+ *
+ * Loopback-only routes expose a snapshot, accept a credential update, and force
+ * a refresh. Relay secrets are written with 0600 permissions under
+ * `$DSH_HOME/relay-balance/credential.json` and are never returned to the page.
+ */
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+export const name = '@local/dsh-relay-balance'
+export const inject = ['webServer', 'credentials']
+
+const DEFAULTS = {
+  apiBaseUrl: 'https://api.keketoken.com',
+  quotaPerUnit: 500000,
+  refreshMs: 60000,
+  timeoutMs: 15000,
+}
+
+const CREDENTIAL_FIELDS = ['apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']
+const MAX_BODY_BYTES = 16 * 1024
+const PLUGIN_VERSION = '2.0.0'
+
+function stateRoot() {
+  const home = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ''
+    ? process.env.DSH_HOME
+    : join(homedir(), '.dsh')
+  return join(home, 'relay-balance')
+}
+
+function baseUrlOf(value) {
+  return String(value || DEFAULTS.apiBaseUrl).trim().replace(/\/+$/, '')
+}
+
+function isLoopback(req) {
+  const address = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : ''
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+}
+
+async function readJsonFile(path) {
+  try {
+    return JSON.parse(await readFile(path, 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+async function writeJsonFile(path, value) {
+  const temporary = `${path}.${process.pid}.tmp`
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
+  await rename(temporary, path)
+}
+
+function numberOrUndefined(value) {
+  if (value === null || value === undefined) return undefined
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  const text = String(value).trim()
+  if (text === '') return undefined
+  const parsed = Number(text)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error('BODY_TOO_LARGE'))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8').trim()
+      if (text === '') {
+        resolve({})
+        return
+      }
+      try {
+        const parsed = JSON.parse(text)
+        resolve(parsed && typeof parsed === 'object' ? parsed : {})
+      } catch {
+        reject(new Error('BODY_NOT_JSON'))
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+function reply(res, status, payload) {
+  const body = JSON.stringify(payload)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(body),
+  })
+  res.end(body)
+}
+
+export function apply(ctx, config = {}) {
+  const settings = { ...DEFAULTS, ...(config || {}) }
+  const root = stateRoot()
+  const credentialPath = join(root, 'credential.json')
+
+  let credential = {}
+  let snapshot = { status: 'loading', updatedAt: null }
+  let refreshedAt = 0
+  let inFlight = null
+  let disposed = false
+  let resolvedKeyCache = { value: '', at: 0 }
+
+  async function loadCredential() {
+    credential = await readJsonFile(credentialPath)
+  }
+
+  /** The usage key: an explicit one, the ambient env var, else the DSH credential route. */
+  async function apiKeyOf() {
+    const stored = typeof credential.apiKey === 'string' ? credential.apiKey.trim() : ''
+    if (stored !== '') return stored
+    const fromEnv = process.env.DEEPSEEK_CLASH_API_KEY
+    if (fromEnv && fromEnv.trim() !== '') return fromEnv.trim()
+    if (Date.now() - resolvedKeyCache.at < 30000) return resolvedKeyCache.value
+    let value = ''
+    try {
+      const resolved = typeof ctx.credentials?.resolve === 'function'
+        ? await ctx.credentials.resolve('DEEPSEEK_CLASH_API_KEY')
+        : undefined
+      value = resolved && typeof resolved.value === 'string' ? resolved.value.trim() : ''
+    } catch {
+      value = ''
+    }
+    resolvedKeyCache = { value, at: Date.now() }
+    return value
+  }
+
+  async function fetchUsage(base) {
+    const apiKey = await apiKeyOf()
+    if (apiKey === '') return { state: 'missing-key' }
+    const response = await fetch(`${base}/v1/dashboard/billing/usage`, {
+      headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(settings.timeoutMs),
+    })
+    if (!response.ok) {
+      return { state: 'error', error: { code: `USAGE_HTTP_${response.status}`, message: `用量接口返回 HTTP ${response.status}` } }
+    }
+    const payload = await response.json().catch(() => null)
+    const total = payload && numberOrUndefined(payload.total_usage)
+    if (total === undefined) {
+      return { state: 'error', error: { code: 'USAGE_SHAPE', message: '用量接口没有返回 total_usage' } }
+    }
+    // new-api/one-api report `total_usage` in cents of the site currency.
+    return { state: 'ok', usage: { cents: total, amount: total / 100 } }
+  }
+
+  async function fetchRelayBalance(base) {
+    const cookie = typeof credential.cookie === 'string' ? credential.cookie.trim() : ''
+    const accessToken = typeof credential.accessToken === 'string' ? credential.accessToken.trim() : ''
+    if (cookie === '' && accessToken === '') return { state: 'missing-session' }
+    const headers = { accept: 'application/json' }
+    if (cookie !== '') headers.cookie = cookie
+    else headers.authorization = `Bearer ${accessToken}`
+    if (typeof credential.userId === 'string' && credential.userId.trim() !== '') {
+      headers['new-api-user'] = credential.userId.trim()
+    }
+    const response = await fetch(`${base}/api/user/self`, {
+      headers,
+      signal: AbortSignal.timeout(settings.timeoutMs),
+    })
+    const payload = await response.json().catch(() => null)
+    if (!response.ok || !payload || payload.success !== true || !payload.data) {
+      const message = payload && payload.message ? String(payload.message) : `余额接口返回 HTTP ${response.status}`
+      return {
+        state: 'error',
+        error: {
+          code: response.status === 401 ? 'BALANCE_UNAUTHORIZED' : `BALANCE_HTTP_${response.status}`,
+          message,
+        },
+      }
+    }
+    const quota = numberOrUndefined(payload.data.quota)
+    const usedQuota = numberOrUndefined(payload.data.used_quota)
+    const perUnit = numberOrUndefined(credential.quotaPerUnit) ?? numberOrUndefined(settings.quotaPerUnit) ?? DEFAULTS.quotaPerUnit
+    if (quota === undefined && usedQuota === undefined) {
+      return { state: 'error', error: { code: 'BALANCE_SHAPE', message: '余额接口没有返回 quota / used_quota' } }
+    }
+    return {
+      state: 'ok',
+      balance: {
+        remaining: quota === undefined ? null : quota / perUnit,
+        used: usedQuota === undefined ? null : usedQuota / perUnit,
+        quota: quota ?? null,
+        usedQuota: usedQuota ?? null,
+        perUnit,
+      },
+    }
+  }
+
+  /** Official DeepSeek wallets, read through the account service so the Host owns the grant. */
+  async function fetchOfficial() {
+    const account = typeof ctx.get === 'function' ? ctx.get('deepseekAccount') : undefined
+    if (!account) return { state: 'unavailable', error: { code: 'ACCOUNT_SERVICE', message: '未安装 DeepSeek 账号服务' } }
+    try {
+      const view = await account.getState()
+      if (!view || view.status !== 'credential-stored') return { state: 'signed-out' }
+      const balance = await account.getBalance({
+        version: PLUGIN_VERSION,
+        locale: 'zh',
+        timezoneOffsetSeconds: -new Date().getTimezoneOffset() * 60,
+      })
+      if (!balance) return { state: 'signed-out' }
+      if (balance.status !== 'ready') {
+        return { state: 'error', error: { code: 'OFFICIAL_BALANCE', message: '官方余额查询失败' } }
+      }
+      return {
+        state: 'ok',
+        wallets: balance.value.map((wallet) => ({ currency: wallet.currency, balance: wallet.balance })),
+        bonusWallets: balance.bonusWallets.map((wallet) => ({ currency: wallet.currency, balance: wallet.balance })),
+      }
+    } catch (error) {
+      return { state: 'error', error: { code: 'OFFICIAL_FAILED', message: String((error && error.message) || error) } }
+    }
+  }
+
+  async function credentialView() {
+    return {
+      hasApiKey: (await apiKeyOf()) !== '',
+      hasStoredApiKey: typeof credential.apiKey === 'string' && credential.apiKey.trim() !== '',
+      hasCookie: typeof credential.cookie === 'string' && credential.cookie.trim() !== '',
+      hasAccessToken: typeof credential.accessToken === 'string' && credential.accessToken.trim() !== '',
+      userId: typeof credential.userId === 'string' ? credential.userId : '',
+      currency: typeof credential.currency === 'string' ? credential.currency : '',
+      quotaPerUnit: numberOrUndefined(credential.quotaPerUnit) ?? numberOrUndefined(settings.quotaPerUnit) ?? DEFAULTS.quotaPerUnit,
+    }
+  }
+
+  async function refresh() {
+    if (inFlight) return inFlight
+    const base = baseUrlOf(settings.apiBaseUrl)
+    inFlight = (async () => {
+      const errors = []
+      let usage = null
+      let balance = null
+      try {
+        const usageResult = await fetchUsage(base)
+        if (usageResult.state === 'ok') usage = usageResult.usage
+        else if (usageResult.error) errors.push(usageResult.error)
+      } catch (error) {
+        errors.push({ code: 'USAGE_FAILED', message: String((error && error.message) || error) })
+      }
+      try {
+        const balanceResult = await fetchRelayBalance(base)
+        if (balanceResult.state === 'ok') balance = balanceResult.balance
+        else if (balanceResult.error) errors.push(balanceResult.error)
+      } catch (error) {
+        errors.push({ code: 'BALANCE_FAILED', message: String((error && error.message) || error) })
+      }
+      const official = await fetchOfficial()
+
+      refreshedAt = Date.now()
+      const anyError = errors.length > 0
+      const anyValue = Boolean(usage || balance)
+      const missing = {
+        apiKey: usage === null && (await apiKeyOf()) === '',
+        session: balance === null && !(credential.cookie || credential.accessToken),
+      }
+      snapshot = {
+        status: anyValue
+          ? (anyError || missing.apiKey || missing.session ? 'partial' : 'ok')
+          : anyError ? 'error' : 'idle',
+        missing,
+        currency: typeof credential.currency === 'string' ? credential.currency : (typeof settings.currency === 'string' ? settings.currency : ''),
+        official,
+        apiBaseUrl: base,
+        usage,
+        balance,
+        credential: await credentialView(),
+        updatedAt: refreshedAt,
+        error: errors[0] || null,
+        errors,
+      }
+      return snapshot
+    })()
+    try {
+      return await inFlight
+    } finally {
+      inFlight = null
+    }
+  }
+
+  async function statePayload() {
+    if (Date.now() - refreshedAt > Math.max(5000, Number(settings.refreshMs) || DEFAULTS.refreshMs)) {
+      await refresh()
+    }
+    return { ...snapshot, credential: await credentialView() }
+  }
+
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'exact',
+      path: '/relay-balance/state',
+      handler: async (req, res) => {
+        if (!isLoopback(req)) {
+          reply(res, 403, { error: { code: 'FORBIDDEN', message: 'loopback only' } })
+          return
+        }
+        if (req.method !== 'GET') {
+          reply(res, 405, { error: { code: 'METHOD', message: 'GET only' } })
+          return
+        }
+        try {
+          reply(res, 200, await statePayload())
+        } catch (error) {
+          reply(res, 500, { error: { code: 'STATE_FAILED', message: String((error && error.message) || error) } })
+        }
+      },
+    }), 'relay-balance: state route')
+
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'exact',
+      path: '/relay-balance/credential',
+      handler: async (req, res) => {
+        if (!isLoopback(req)) {
+          reply(res, 403, { error: { code: 'FORBIDDEN', message: 'loopback only' } })
+          return
+        }
+        if (req.method !== 'POST') {
+          reply(res, 405, { error: { code: 'METHOD', message: 'POST only' } })
+          return
+        }
+        try {
+          const body = await readBody(req)
+          const next = { ...credential }
+          for (const field of CREDENTIAL_FIELDS) {
+            if (!Object.prototype.hasOwnProperty.call(body, field)) continue
+            const value = body[field]
+            if (value === null) {
+              delete next[field]
+              continue
+            }
+            let text = String(value).trim()
+            if (text.toLowerCase().startsWith('cookie:')) text = text.slice(7).trim()
+            if (field === 'cookie' && text !== '' && !text.includes('=')) text = `session=${text}`
+            if (text === '') delete next[field]
+            else next[field] = text
+          }
+          credential = next
+          await mkdir(root, { recursive: true, mode: 0o700 })
+          await writeJsonFile(credentialPath, credential)
+          refreshedAt = 0
+          reply(res, 200, { saved: true, credential: await credentialView() })
+        } catch (error) {
+          const code = String((error && error.message) || error)
+          reply(res, 400, { error: { code, message: code === 'BODY_NOT_JSON' ? '请求体不是 JSON' : code } })
+        }
+      },
+    }), 'relay-balance: credential route')
+
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'exact',
+      path: '/relay-balance/refresh',
+      handler: async (req, res) => {
+        if (!isLoopback(req)) {
+          reply(res, 403, { error: { code: 'FORBIDDEN', message: 'loopback only' } })
+          return
+        }
+        if (req.method !== 'POST') {
+          reply(res, 405, { error: { code: 'METHOD', message: 'POST only' } })
+          return
+        }
+        try {
+          refreshedAt = 0
+          reply(res, 200, await refresh())
+        } catch (error) {
+          reply(res, 500, { error: { code: 'REFRESH_FAILED', message: String((error && error.message) || error) } })
+        }
+      },
+    }), 'relay-balance: refresh route')
+
+    webCtx.effect(() => {
+      const timer = setInterval(() => {
+        if (disposed) return
+        refresh().catch(() => {})
+      }, Math.max(10000, Number(settings.refreshMs) || DEFAULTS.refreshMs))
+      return () => clearInterval(timer)
+    }, 'relay-balance: refresh timer')
+  })
+
+  ctx.effect(() => {
+    disposed = false
+    loadCredential()
+      .then(() => refresh())
+      .catch(() => {})
+    return () => {
+      disposed = true
+    }
+  }, 'relay-balance: initial read')
+}

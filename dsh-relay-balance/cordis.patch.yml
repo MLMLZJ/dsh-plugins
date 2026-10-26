@@ -1,0 +1,8 @@
+- insert:
+    - id: relay-balance
+      name: dsh-relay-balance
+      config:
+        apiBaseUrl: https://api.keketoken.com
+        quotaPerUnit: 500000
+        refreshMs: 60000
+        timeoutMs: 15000
