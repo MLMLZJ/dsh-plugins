@@ -31,7 +31,7 @@ const DEFAULTS = {
 
 const CREDENTIAL_FIELDS = ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']
 const MAX_BODY_BYTES = 16 * 1024
-const PLUGIN_VERSION = '3.5.1'
+const PLUGIN_VERSION = '3.5.2'
 
 function stateRoot() {
   const home = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ''

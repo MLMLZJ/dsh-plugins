@@ -450,7 +450,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.5.1'
+    const MODULE_VERSION = '3.5.2'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
 
     function blurSupport() {
@@ -521,10 +521,27 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       return payload
     }
 
+    // Compact form for the card: two decimals once past 1, four below. Never
+    // rounds a non-zero amount down to "0.0000" though — a balance that reads as
+    // zero when it is not is worse than an ugly number.
     function formatAmount(value) {
       if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
-      const digits = Math.abs(value) >= 1 ? 2 : 4
-      return value.toFixed(digits)
+      const magnitude = Math.abs(value)
+      if (magnitude >= 1) return value.toFixed(2)
+      if (magnitude === 0) return '0.0000'
+      for (let digits = 4; digits <= 12; digits += 1) {
+        const text = value.toFixed(digits)
+        if (Number(text) !== 0) return text
+      }
+      return value.toExponential(2)
+    }
+
+    /** Exact value, for tooltips and the settings detail page. */
+    function formatPrecise(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
+      if (value === 0) return '0'
+      // String() keeps every digit the API returned without adding float noise.
+      return String(value)
     }
 
     function formatWalletAmount(text) {
@@ -546,21 +563,26 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
     }
 
     function officialSummary(official) {
-      const empty = { state: 'loading', text: '—', sign: '', detail: null }
+      const empty = { state: 'loading', text: '—', exact: null, sign: '', detail: null }
       if (!official) return empty
-      if (official.state !== 'ok') return { state: official.state, text: '—', sign: '', detail: null }
+      if (official.state !== 'ok') return { state: official.state, text: '—', exact: null, sign: '', detail: null }
       const all = official.wallets || []
       const nonZero = all.filter((wallet) => Number(wallet.balance) !== 0)
       const list = nonZero.length > 0 ? nonZero : all
-      if (list.length === 0) return { state: 'ok', text: '0.00', sign: '', detail: null }
+      if (list.length === 0) return { state: 'ok', text: '0.00', exact: null, sign: '', detail: null }
       const single = list.length === 1
       const text = single
         ? formatWalletAmount(list[0].balance)
         : list.map((wallet) => `${currencySign(wallet.currency)}${formatWalletAmount(wallet.balance)}`).join(' + ')
       const bonus = (official.bonusWallets || []).filter((wallet) => Number(wallet.balance) > 0)
+      // Exact figures for hover tooltips; `text` stays compact for the layout.
+      const exact = single
+        ? `${currencySign(list[0].currency)}${formatPrecise(Number(list[0].balance))}`
+        : list.map((wallet) => `${currencySign(wallet.currency)}${formatPrecise(Number(wallet.balance))}`).join(' + ')
       return {
         state: 'ok',
         text,
+        exact,
         sign: single ? currencySign(list[0].currency) : '',
         detail: bonus.length > 0
           ? bonus.map((wallet) => `${currencySign(wallet.currency)}${formatWalletAmount(wallet.balance)}`).join(' + ')
@@ -678,6 +700,15 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         : relayBalance ? t('balance') : t('usage')
       const long = amountText.length > 9
 
+      // Precise value for the hover tooltip: the compact form above rounds for
+      // layout, but the exact figure should always be one hover away.
+      const precise = (value) => (value === null || value === undefined ? '' : `${sign}${formatPrecise(value)}`)
+      const amountTitle = tab === 'official'
+        ? amountText
+        : relayBalance && relayBalance.remaining !== null
+          ? precise(relayBalance.remaining)
+          : usage ? precise(usage.amount) : ''
+
       const stats = snapshot.stats
 
       const rows = (tab === 'official'
@@ -696,17 +727,17 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
             stats.today !== null
               ? h('div', { className: 'rb-kv', key: 'today' },
                 h('span', null, t('todaySpent')),
-                h('b', null, `${sign}${formatAmount(stats.today)}`))
+                h('b', { title: precise(stats.today) }, `${sign}${formatAmount(stats.today)}`))
               : null,
             stats.total !== null
               ? h('div', { className: 'rb-kv', key: 'total' },
                 h('span', null, t('totalSpent')),
-                h('b', null, `${sign}${formatAmount(stats.total)}`))
+                h('b', { title: precise(stats.total) }, `${sign}${formatAmount(stats.total)}`))
               : null,
             stats.recharged !== null && stats.recharged > 0
               ? h('div', { className: 'rb-kv', key: 'recharged' },
                 h('span', null, t('recharged')),
-                h('b', null, `${sign}${formatAmount(stats.recharged)}`))
+                h('b', { title: precise(stats.recharged) }, `${sign}${formatAmount(stats.recharged)}`))
               : null,
             stats.todayRequests !== null && stats.todayRequests > 0
               ? h('div', { className: 'rb-kv', key: 'todayReq' },
@@ -718,12 +749,12 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
             relayBalance && relayBalance.used !== null
               ? h('div', { className: 'rb-kv', key: 'used' },
                 h('span', null, t('used')),
-                h('b', null, `${sign}${formatAmount(relayBalance.used)}`))
+                h('b', { title: precise(relayBalance.used) }, `${sign}${formatAmount(relayBalance.used)}`))
               : null,
             usage
               ? h('div', { className: 'rb-kv', key: 'usage' },
                 h('span', null, t('usage')),
-                h('b', null, `${sign}${formatAmount(usage.amount)}`))
+                h('b', { title: precise(usage.amount) }, `${sign}${formatAmount(usage.amount)}`))
               : null,
           ]).filter(Boolean)
 
@@ -758,7 +789,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
             onClick: () => updateCard({ tab: 'relay' }),
           }, t('relay')),
           h('span', { className: 'rb-updated' }, updated || t('never'))),
-        h('div', { className: 'rb-amount' },
+        h('div', { className: 'rb-amount', title: amountTitle || undefined },
           amountSign ? h('span', { className: 'rb-cur' }, amountSign) : null,
           h('span', { className: `rb-num${long ? ' rb-num--sm' : ''}` }, amountText),
           h('span', { className: 'rb-caption' }, amountLabel)),
@@ -926,9 +957,9 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 
       const tag = (text, tone) => h('span', { className: 'rb-tag', 'data-tone': tone || 'muted' }, text)
 
-      const heroCell = (label, value, note) => h('div', { className: 'rb-hero-cell' },
+      const heroCell = (label, value, note, exact) => h('div', { className: 'rb-hero-cell' },
         h('span', { className: 'rb-hero-label' }, label),
-        h('span', { className: 'rb-hero-value' }, value),
+        h('span', { className: 'rb-hero-value', title: exact || undefined }, value),
         h('span', { className: 'rb-hero-note' }, note))
 
       return h('div', { className: 'rb-page' },
@@ -940,14 +971,19 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
             heroCell(t('officialBalance'), `${official.sign}${official.text}`,
               official.state === 'ok'
                 ? (official.detail ? `${t('bonus')} ${official.detail}` : t('signedIn'))
-                : t('officialSignedOut')),
+                : t('officialSignedOut'),
+              official.exact),
             h('div', { className: 'rb-hero-sep' }),
             heroCell(t('relayBalance'), balance ? `${sign}${formatAmount(balance.remaining)}` : '—',
-              usage ? `${t('used')} ${sign}${formatAmount(usage.amount)}` : t('needSession'))),
+              usage ? `${t('used')} ${sign}${formatAmount(usage.amount)}` : t('needSession'),
+              balance && balance.remaining !== null ? `${sign}${formatPrecise(balance.remaining)}` : '')),
           h('div', { className: 'rb-list' },
             h('div', { className: 'rb-item' },
               h('span', { className: 'rb-item-k' }, t('usage')),
-              h('span', { className: 'rb-item-v' }, usage ? `${sign}${formatAmount(usage.amount)}` : '—')),
+              h('span', {
+                className: 'rb-item-v',
+                title: usage ? `${sign}${formatPrecise(usage.amount)}` : undefined,
+              }, usage ? `${sign}${formatAmount(usage.amount)}` : '—')),
             h('div', { className: 'rb-item' },
               h('span', { className: 'rb-item-k' }, t('updated')),
               h('span', { className: 'rb-item-v' }, updated || t('never'))),
