@@ -55,6 +55,14 @@ plugin_manager action=install_bundle target=/abs/path/dsh-plugins/dsh-relay-bala
 
 `install_bundle` 建立的是链接而不是拷贝，**请保留该目录**。
 
+### 验证安装
+
+```bash
+dsh --profile web --dump-config | grep -A4 relay-balance
+```
+
+应输出 `id: relay-balance`、`name: dsh-relay-balance` 以及 `config` 里的四项。然后在界面里打开 **设置 → 中转用量**，页面底部「运行环境」会显示模块版本与 `毛玻璃` / `折射` 两个能力标签。
+
 ### 更新与卸载
 
 ```bash
@@ -123,6 +131,14 @@ dsh plugin --profile web remove dsh-relay-balance   # 卸载
 
 - DeepSeek Harness `0.2.1-rc.2` 上开发与验证
 - 需要 Harness 提供 `webServer`、`credentials` Host 服务，以及 `shell.overlay`、`settings.section` 两个客户端槽位
+
+## 致谢
+
+玻璃质感的做法参考了这两个 MIT 项目，实现是自己写的：
+
+- [deepika-builds/liquid-glass](https://github.com/deepika-builds/liquid-glass) — 单文件 SVG 位移折射，本插件的位移贴图与三通道合成按它的方案移植
+- [rdev/liquid-glass-react](https://github.com/rdev/liquid-glass-react) — 镜面高光的 inset 阴影配方
+- 技术背景：[aave.com/design/building-glass-for-the-web](https://aave.com/design/building-glass-for-the-web)
 
 ## License
 
