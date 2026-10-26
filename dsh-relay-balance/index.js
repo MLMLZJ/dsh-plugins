@@ -17,6 +17,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { detectProvider, normalizeBase, numberOrUndefined } from './providers.js'
+
 export const name = 'dsh-relay-balance'
 export const inject = ['webServer', 'credentials']
 
@@ -29,7 +31,7 @@ const DEFAULTS = {
 
 const CREDENTIAL_FIELDS = ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']
 const MAX_BODY_BYTES = 16 * 1024
-const PLUGIN_VERSION = '3.4.0'
+const PLUGIN_VERSION = '3.5.0'
 
 function stateRoot() {
   const home = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ''
@@ -39,7 +41,7 @@ function stateRoot() {
 }
 
 function baseUrlOf(value) {
-  return String(value == null ? '' : value).trim().replace(/\/+$/, '')
+  return normalizeBase(value)
 }
 
 function isLoopback(req) {
@@ -59,15 +61,6 @@ async function writeJsonFile(path, value) {
   const temporary = `${path}.${process.pid}.tmp`
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
   await rename(temporary, path)
-}
-
-function numberOrUndefined(value) {
-  if (value === null || value === undefined) return undefined
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
-  const text = String(value).trim()
-  if (text === '') return undefined
-  const parsed = Number(text)
-  return Number.isFinite(parsed) ? parsed : undefined
 }
 
 function readBody(req) {
@@ -151,68 +144,24 @@ export function apply(ctx, config = {}) {
     return value
   }
 
-  async function fetchUsage(base) {
-    const apiKey = await apiKeyOf()
-    if (apiKey === '') return { state: 'missing-key' }
-    const response = await fetch(`${base}/v1/dashboard/billing/usage`, {
-      headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(settings.timeoutMs),
+  /**
+   * Ask the provider adapters what this site is and how much money is left.
+   * Returns the normalised result, or a reason why every adapter declined.
+   */
+  async function fetchRelay() {
+    const timeoutMs = settings.timeoutMs
+    const quotaPerUnit = numberOrUndefined(credential.quotaPerUnit) ?? numberOrUndefined(settings.quotaPerUnit) ?? DEFAULTS.quotaPerUnit
+    const detected = await detectProvider({
+      apiBaseUrl: relayBase(),
+      apiKey: await apiKeyOf(),
+      cookie: typeof credential.cookie === 'string' ? credential.cookie.trim() : '',
+      accessToken: typeof credential.accessToken === 'string' ? credential.accessToken.trim() : '',
+      userId: typeof credential.userId === 'string' ? credential.userId.trim() : '',
+      quotaPerUnit,
+      timeoutMs,
     })
-    if (!response.ok) {
-      return { state: 'error', error: { code: `USAGE_HTTP_${response.status}`, message: `用量接口返回 HTTP ${response.status}` } }
-    }
-    const payload = await response.json().catch(() => null)
-    const total = payload && numberOrUndefined(payload.total_usage)
-    if (total === undefined) {
-      return { state: 'error', error: { code: 'USAGE_SHAPE', message: '用量接口没有返回 total_usage' } }
-    }
-    // new-api/one-api report `total_usage` in cents of the site currency.
-    return { state: 'ok', usage: { cents: total, amount: total / 100 } }
+    return detected
   }
-
-  async function fetchRelayBalance(base) {
-    const cookie = typeof credential.cookie === 'string' ? credential.cookie.trim() : ''
-    const accessToken = typeof credential.accessToken === 'string' ? credential.accessToken.trim() : ''
-    if (cookie === '' && accessToken === '') return { state: 'missing-session' }
-    const headers = { accept: 'application/json' }
-    if (cookie !== '') headers.cookie = cookie
-    else headers.authorization = `Bearer ${accessToken}`
-    if (typeof credential.userId === 'string' && credential.userId.trim() !== '') {
-      headers['new-api-user'] = credential.userId.trim()
-    }
-    const response = await fetch(`${base}/api/user/self`, {
-      headers,
-      signal: AbortSignal.timeout(settings.timeoutMs),
-    })
-    const payload = await response.json().catch(() => null)
-    if (!response.ok || !payload || payload.success !== true || !payload.data) {
-      const message = payload && payload.message ? String(payload.message) : `余额接口返回 HTTP ${response.status}`
-      return {
-        state: 'error',
-        error: {
-          code: response.status === 401 ? 'BALANCE_UNAUTHORIZED' : `BALANCE_HTTP_${response.status}`,
-          message,
-        },
-      }
-    }
-    const quota = numberOrUndefined(payload.data.quota)
-    const usedQuota = numberOrUndefined(payload.data.used_quota)
-    const perUnit = numberOrUndefined(credential.quotaPerUnit) ?? numberOrUndefined(settings.quotaPerUnit) ?? DEFAULTS.quotaPerUnit
-    if (quota === undefined && usedQuota === undefined) {
-      return { state: 'error', error: { code: 'BALANCE_SHAPE', message: '余额接口没有返回 quota / used_quota' } }
-    }
-    return {
-      state: 'ok',
-      balance: {
-        remaining: quota === undefined ? null : quota / perUnit,
-        used: usedQuota === undefined ? null : usedQuota / perUnit,
-        quota: quota ?? null,
-        usedQuota: usedQuota ?? null,
-        perUnit,
-      },
-    }
-  }
-
   /** Official DeepSeek wallets, read through the account service so the Host owns the grant. */
   async function fetchOfficial() {
     const account = typeof ctx.get === 'function' ? ctx.get('deepseekAccount') : undefined
@@ -259,6 +208,9 @@ export function apply(ctx, config = {}) {
       const errors = []
       let usage = null
       let balance = null
+      let provider = 'new-api'
+      let stats = null
+      let sub2apiCurrency = ''
       if (base === '') {
         const officialOnly = await fetchOfficial()
         refreshedAt = Date.now()
@@ -277,35 +229,46 @@ export function apply(ctx, config = {}) {
         }
         return snapshot
       }
-      try {
-        const usageResult = await fetchUsage(base)
-        if (usageResult.state === 'ok') usage = usageResult.usage
-        else if (usageResult.error) errors.push(usageResult.error)
-      } catch (error) {
-        errors.push({ code: 'USAGE_FAILED', message: String((error && error.message) || error) })
+      // Hand the site to the provider adapters: they probe in order of specificity
+      // and the first one that recognises it wins. A provider that reports an
+      // explicit error (bad key, missing balance credential) stops the probe run.
+      const detected = await fetchRelay().catch((error) => ({
+        adapter: null,
+        result: null,
+        errors: [{ code: 'PROBE_FAILED', message: String((error && error.message) || error) }],
+      }))
+      if (detected.result) {
+        provider = detected.result.provider
+        usage = detected.result.usage
+        balance = detected.result.balance
+        stats = detected.result.stats
+        sub2apiCurrency = detected.result.currency || ''
       }
-      try {
-        const balanceResult = await fetchRelayBalance(base)
-        if (balanceResult.state === 'ok') balance = balanceResult.balance
-        else if (balanceResult.error) errors.push(balanceResult.error)
-      } catch (error) {
-        errors.push({ code: 'BALANCE_FAILED', message: String((error && error.message) || error) })
-      }
+      for (const error of detected.errors || []) errors.push(error)
       const official = await fetchOfficial()
 
       refreshedAt = Date.now()
       const anyError = errors.length > 0
       const anyValue = Boolean(usage || balance)
+      const hasKey = (await apiKeyOf()) !== ''
+      const hasPanelCredential = Boolean(credential.cookie || credential.accessToken)
       const missing = {
-        apiKey: usage === null && (await apiKeyOf()) === '',
-        session: balance === null && !(credential.cookie || credential.accessToken),
+        apiKey: !hasKey,
+        session: provider === 'new-api' && balance === null && !hasPanelCredential,
       }
       snapshot = {
-        status: anyValue
+        status: detected.adapter
           ? (anyError || missing.apiKey || missing.session ? 'partial' : 'ok')
           : anyError ? 'error' : 'idle',
         missing,
-        currency: typeof credential.currency === 'string' ? credential.currency : (typeof settings.currency === 'string' ? settings.currency : ''),
+        provider,
+        providerLabel: detected.adapter ? detected.adapter.label : null,
+        stats,
+        currency: provider === 'sub2api' && sub2apiCurrency !== ''
+          ? sub2apiCurrency
+          : (typeof credential.currency === 'string' && credential.currency !== ''
+            ? credential.currency
+            : (typeof settings.currency === 'string' ? settings.currency : '')),
         official,
         apiBaseUrl: base,
         usage,

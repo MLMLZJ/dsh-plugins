@@ -1,6 +1,8 @@
 # dsh-relay-balance
 
-[DeepSeek Harness](https://github.com/deepseek-ai) 插件：在 Harness Web 界面里显示**第三方中转站**（new-api / one-api 兼容）的已用金额与剩余余额，同时读取**官方 DeepSeek 账号**余额。
+[DeepSeek Harness](https://github.com/deepseek-ai) 插件：在 Harness Web 界面里显示**第三方中转站**的已用金额与剩余余额，同时读取**官方 DeepSeek 账号**余额。
+
+**自动识别站点类型**，不需要你选协议：sub2api（卡扣AI 等）、new-api / one-api 系列、OpenRouter，以及任何 OpenAI 兼容站点都能接。
 
 界面由两部分组成：一张可拖动的**玻璃质感浮窗卡片**（`shell.overlay`），以及一页**设置面板**（`settings.section`）。
 
@@ -8,18 +10,33 @@
 ┌──────────────────────────┐
 │ ⠿  用量与余额         ⌄  ✕ │
 │ 官方   中转             22:41 │
-│ ¥ 1.0160   剩余额度          │
+│ $ 47.08   剩余额度          │
 │ ────────────────────────  │
-│ 已用              ¥0.9840 │
-│ 已用金额          ¥0.9840 │
+│ 今日实付          $0.6617 │
+│ 累计实付          $0.7131 │
+│ 今日请求              190 │
 │ ────────────────────────  │
 │ ● 已同步                  ⟳ │
 └──────────────────────────┘
 ```
 
+## 支持的站点
+
+插件按「信息量从多到少」的顺序逐个探测，第一个认领成功的适配器生效。全部探测失败也不会抛错，只在设置页显示「未识别」。
+
+| 适配器 | 识别依据 | 能读到 |
+| --- | --- | --- |
+| **sub2api**（卡扣AI 等） | `GET /v1/usage` | 余额、今日/累计实付、请求数、rpm、当前模型 |
+| **OpenRouter** | `GET /api/v1/key` | 余额、额度上限、已用 |
+| **new-api / one-api** 系列 | `GET /v1/dashboard/billing/usage` | 已用金额（分 → 货币）；余额需站点登录态 |
+| **通用 OpenAI 兼容** | `GET /v1/models` | 仅验证地址与 Key 有效，不显示金额 |
+
+sub2api 的 `/v1/usage` 只用 **API Key** 鉴权，**不需要**任何登录态、Cookie 或面板令牌——所以插件永远不会碰你的浏览器会话，退出登录、换设备、改密码都不影响取数。
+
 ## 功能
 
-- **设置页「中转用量」**：官方 / 中转双栏总览、已用金额与余额、凭证管理、悬浮卡片开关
+- **自动识别站点**：只填地址和 Key，插件自己判断是哪类中转站
+- **设置页「中转用量」**：官方 / 中转双栏总览、站点类型、已用金额与余额、凭证管理、悬浮卡片开关
 - **浮窗卡片**：拖动（位置记忆）、官方/中转切换、折叠、关闭、60 秒自动刷新、鼠标悬停刷新
 - **两种余额来源并存**：官方余额走 Harness 的账号服务，中转余额走站点 API
 - **凭证只在本机**：明文只写入 Host 侧的 `credential.json`，浏览器只拿得到「是否已配置」
@@ -85,23 +102,36 @@ dsh plugin --profile web remove dsh-relay-balance   # 卸载
 
 | 字段 | 用途 |
 | --- | --- |
-| `apiBaseUrl` | 中转站地址，例如 `https://relay.example.com`。**必填**；填在设置页里，优先于插件 Config |
-| `apiKey` | 读用量，`/v1/dashboard/billing/usage`。留空则回落到 DSH 里已配置的 `DEEPSEEK_CLASH_API_KEY` |
-| `cookie` | 读余额，站点 `session` 值（登录后 F12 → Application → Cookies） |
-| `accessToken` | 读余额的另一种方式：站点「个人设置 → 系统访问令牌」 |
+| `apiBaseUrl` | 中转站地址，例如 `https://relay.example.com`。**必填**；填在设置页里，优先于插件 Config。填 API 域名而不是网页地址（如 `https://api.kakouai.com`，不是 `https://kakouai.com/dashboard`） |
+| `apiKey` | **sub2api / new-api / OpenRouter 都靠它取数**。留空则回落到 DSH 里已配置的 `DEEPSEEK_CLASH_API_KEY` |
+| `cookie` | 仅 new-api 系列读余额时需要，站点 `session` 值（登录后 F12 → Application → Cookies） |
+| `accessToken` | 仅 new-api 系列读余额时需要，站点「个人设置 → 系统访问令牌」 |
 | `userId` | 站点要求 `new-api-user` 头时填写 |
-| `quotaPerUnit` | 覆盖插件的配额换算单位 |
-| `currency` | 填 `CNY` 显示 ¥、填 `USD` 显示 $、留空只显示数字 |
+| `quotaPerUnit` | 仅 new-api 系列的配额换算单位（1 货币单位 = 多少 quota） |
+| `currency` | 覆盖货币符号：`CNY` 显示 ¥、`USD` 显示 $、留空则用站点返回值 |
+
+> sub2api 与 OpenRouter 返回的金额**已经是货币单位**，`quotaPerUnit` 对它们不生效。
 
 ## 数据来源
 
-| 数据 | 接口 | 凭证 |
-| --- | --- | --- |
-| 已用金额 | `GET {apiBaseUrl}/v1/dashboard/billing/usage` | API Key（`total_usage` 为「分」） |
-| 中转余额 | `GET {apiBaseUrl}/api/user/self` | Session Cookie 或 `Authorization: Bearer <accessToken>` |
-| 官方余额 | Harness 账号服务 `deepseekAccount.getBalance()` | DSH 登录态 |
+| 站点类型 | 数据 | 接口 | 凭证 |
+| --- | --- | --- | --- |
+| sub2api | 余额 + 今日/累计实付 + 请求数 | `GET {apiBaseUrl}/v1/usage` | API Key |
+| OpenRouter | 余额 + 额度上限 | `GET {apiBaseUrl}/api/v1/key` | API Key |
+| new-api 系列 | 已用金额 | `GET {apiBaseUrl}/v1/dashboard/billing/usage` | API Key（`total_usage` 为「分」） |
+| new-api 系列 | 余额 | `GET {apiBaseUrl}/api/user/self` | Session Cookie 或 `Authorization: Bearer <accessToken>` |
+| 通用兼容 | 地址与 Key 有效性 | `GET {apiBaseUrl}/v1/models` | API Key |
+| 官方 | 官方余额 | Harness 账号服务 `deepseekAccount.getBalance()` | DSH 登录态 |
 
-`quota` ÷ `quotaPerUnit` 得到货币金额。
+new-api 系列的余额由 `quota ÷ quotaPerUnit` 得到货币金额。
+
+### 探测顺序与失败行为
+
+适配器按 `sub2api → openrouter → new-api → generic` 依次探测，**第一个成功认领的生效**：
+
+- 某个适配器抛错（网络、超时）→ 记录错误并继续下一个
+- 站点返回 401/403 → 判定为「Key 被拒绝」，停止探测并提示
+- 全部未认领 → 卡片显示「未识别」，不误报成「已同步」
 
 ## 安全
 
@@ -124,14 +154,27 @@ dsh plugin --profile web remove dsh-relay-balance   # 卸载
 | 改了样式但界面没变 | 客户端模块按内容哈希缓存，按 **Ctrl+Shift+R** 硬刷新 |
 | 设置里没有「中转用量」，卡片也消失了 | 重装插件会先卸载客户端半，页面若没收到重新导入的通知就一直是空的；**Ctrl+Shift+R** 一次即恢复（宿主端其实一直在跑，可用 `curl 127.0.0.1:3080/relay-balance/state` 验证） |
 | 卡片显示「还没有填写中转站地址」 | 到设置页填你的中转站地址（`https://…`） |
-| 余额显示「未配置」 | 没填 `cookie` 或 `accessToken`，二者任一即可 |
-| 余额数字不对 | 站点 `quotaPerUnit` 不是 500000，在设置页覆盖该值 |
+| 显示「站点类型：未识别」 | 地址或 Key 不对，或者该站点不在支持列表里。确认填的是 **API 域名**（如 `https://api.example.com`）而不是网页控制台地址 |
+| 提示「API Key 被拒绝」 | Key 失效/被禁用，或不是该站点的 Key |
+| new-api 站点余额显示「未配置」 | 没填 `cookie` 或 `accessToken`，二者任一即可（sub2api / OpenRouter 不需要） |
+| new-api 站点余额数字不对 | 该站 `quotaPerUnit` 不是 500000，在设置页覆盖该值 |
 | 卡片没有玻璃效果 | 设置页「运行环境」里看 `毛玻璃` / `折射` 两个标签：`无折射` 表示当前内核不支持 SVG 位移滤镜 |
 
 ## 兼容性
 
 - DeepSeek Harness `0.2.1-rc.2` 上开发与验证
 - 需要 Harness 提供 `webServer`、`credentials` Host 服务，以及 `shell.overlay`、`settings.section` 两个客户端槽位
+
+## 开发
+
+适配器在 `providers.js`，每个适配器导出 `{ id, label, needsKey, detect(ctx) }`，`detect` 返回统一结构或 `null`（表示「不是我的站点」）。
+新增站点类型只需加一个适配器并放进 `ADAPTERS` 数组，无需改 Host 或界面。
+
+用真实站点验证适配层：
+
+```bash
+node verify-providers.mjs https://api.example.com sk-your-key
+```
 
 ## 致谢
 

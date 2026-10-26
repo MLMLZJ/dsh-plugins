@@ -1,20 +1,24 @@
 {
   "name": "dsh-relay-balance",
-  "version": "3.4.1",
+  "version": "3.5.0",
   "type": "module",
-  "description": "Relay usage and balance widget for DeepSeek Harness: a draggable Apple-style liquid-glass card plus a settings page for OpenAI-compatible relays (new-api) and the official DeepSeek account.",
+  "description": "Relay usage and balance widget for DeepSeek Harness: a draggable Apple-style liquid-glass card plus a settings page, with auto-detection for sub2api, new-api/one-api, OpenRouter and other OpenAI-compatible relays, plus the official DeepSeek account balance.",
   "exports": {
     ".": "./index.js",
+    "./providers": "./providers.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
+    "providers.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
-    "icon.svg"
+    "icon.svg",
+    "README.md",
+    "verify-providers.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -34,8 +38,11 @@
     "dsh",
     "deepseek-harness",
     "cordis-plugin",
+    "sub2api",
     "new-api",
     "one-api",
+    "openrouter",
+    "relay",
     "balance",
     "usage",
     "glassmorphism"

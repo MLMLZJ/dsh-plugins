@@ -14,6 +14,10 @@ window.__ModuleLoader__.load({
       usage: '已用金额',
       balance: '剩余额度',
       used: '已用',
+      todaySpent: '今日实付',
+      totalSpent: '累计实付',
+      recharged: '累计充值',
+      todayRequests: '今日请求',
       updated: '最近刷新',
       never: '尚未刷新',
       refresh: '刷新',
@@ -29,8 +33,8 @@ window.__ModuleLoader__.load({
       apiKeyHint: '留空则使用 DSH 里已配置的 DEEPSEEK_CLASH_API_KEY',
       cookie: '站点 Cookie（余额）',
       cookieHint: '登录该站后按 F12 → Application → Cookies 复制 session 的值',
-      accessToken: '或系统访问令牌',
-      accessTokenHint: '站点“设置 → 个人设置 → 系统访问令牌”生成',
+      accessToken: '面板令牌（一般不需要）',
+      accessTokenHint: '卡扣AI / sub2api 站点只需上面的 API Key，不需要任何登录令牌；此栏仅 new-api 站点读取余额时使用',
       userId: '用户 ID（可选）',
       userIdHint: '站点要求 new-api-user 头时填写',
       quotaPerUnit: '每 1 个货币单位的配额',
@@ -62,6 +66,8 @@ window.__ModuleLoader__.load({
       loading: '加载中',
       signedIn: '已登录',
       runtime: '运行环境',
+      provider: '站点类型',
+      providerUnknown: '未识别',
       blurYes: '毛玻璃可用',
       blurNo: '不支持模糊',
       refractYes: '折射',
@@ -78,6 +84,10 @@ window.__ModuleLoader__.load({
       usage: 'Spent',
       balance: 'Remaining',
       used: 'Used',
+      todaySpent: 'Today',
+      totalSpent: 'Total spent',
+      recharged: 'Recharged',
+      todayRequests: 'Requests today',
       updated: 'Updated',
       never: 'Not yet',
       refresh: 'Refresh',
@@ -93,8 +103,8 @@ window.__ModuleLoader__.load({
       apiKeyHint: 'Leave empty to use the DEEPSEEK_CLASH_API_KEY already configured in DSH',
       cookie: 'Site cookie (balance)',
       cookieHint: 'Sign in to the site, then copy the session cookie value from DevTools → Application → Cookies',
-      accessToken: 'Or a system access token',
-      accessTokenHint: 'Generate one in the site\'s settings',
+      accessToken: 'Panel token (rarely needed)',
+      accessTokenHint: 'kakouai / sub2api sites only need the API key above and no login token at all; this field is for new-api sites that read balance via a session token',
       userId: 'User id (optional)',
       userIdHint: 'Fill it when the site needs the new-api-user header',
       quotaPerUnit: 'Quota units per currency unit',
@@ -126,6 +136,8 @@ window.__ModuleLoader__.load({
       loading: 'Loading',
       signedIn: 'Signed in',
       runtime: 'Runtime',
+      provider: 'Site type',
+      providerUnknown: 'not recognised',
       blurYes: 'blur supported',
       blurNo: 'no blur',
       refractYes: 'refraction',
@@ -438,7 +450,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.4.1'
+    const MODULE_VERSION = '3.5.0'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
 
     function blurSupport() {
@@ -666,6 +678,8 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         : relayBalance ? t('balance') : t('usage')
       const long = amountText.length > 9
 
+      const stats = snapshot.stats
+
       const rows = (tab === 'official'
         ? [
           official.detail
@@ -677,18 +691,41 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
             h('span', null, t('status')),
             h('b', null, official.state === 'ok' ? t('signedIn') : official.state === 'signed-out' ? t('officialSignedOut') : t('failed'))),
         ]
-        : [
-          relayBalance && relayBalance.used !== null
-            ? h('div', { className: 'rb-kv', key: 'used' },
-              h('span', null, t('used')),
-              h('b', null, `${sign}${formatAmount(relayBalance.used)}`))
-            : null,
-          usage
-            ? h('div', { className: 'rb-kv', key: 'usage' },
-              h('span', null, t('usage')),
-              h('b', null, `${sign}${formatAmount(usage.amount)}`))
-            : null,
-        ]).filter(Boolean)
+        : stats
+          ? [
+            stats.today !== null
+              ? h('div', { className: 'rb-kv', key: 'today' },
+                h('span', null, t('todaySpent')),
+                h('b', null, `${sign}${formatAmount(stats.today)}`))
+              : null,
+            stats.total !== null
+              ? h('div', { className: 'rb-kv', key: 'total' },
+                h('span', null, t('totalSpent')),
+                h('b', null, `${sign}${formatAmount(stats.total)}`))
+              : null,
+            stats.recharged !== null && stats.recharged > 0
+              ? h('div', { className: 'rb-kv', key: 'recharged' },
+                h('span', null, t('recharged')),
+                h('b', null, `${sign}${formatAmount(stats.recharged)}`))
+              : null,
+            stats.todayRequests !== null && stats.todayRequests > 0
+              ? h('div', { className: 'rb-kv', key: 'todayReq' },
+                h('span', null, t('todayRequests')),
+                h('b', null, String(stats.todayRequests)))
+              : null,
+          ].filter(Boolean)
+          : [
+            relayBalance && relayBalance.used !== null
+              ? h('div', { className: 'rb-kv', key: 'used' },
+                h('span', null, t('used')),
+                h('b', null, `${sign}${formatAmount(relayBalance.used)}`))
+              : null,
+            usage
+              ? h('div', { className: 'rb-kv', key: 'usage' },
+                h('span', null, t('usage')),
+                h('b', null, `${sign}${formatAmount(usage.amount)}`))
+              : null,
+          ]).filter(Boolean)
 
       const alerts = []
       if (tab === 'relay') {
@@ -919,6 +956,13 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
               h('span', { className: 'rb-item-v', style: { display: 'inline-flex', alignItems: 'center', gap: '7px' } },
                 h('span', { className: 'rb-dot', 'data-state': status.tone }),
                 status.text)),
+            h('div', { className: 'rb-item' },
+              h('span', { className: 'rb-item-k' }, t('provider')),
+              h('span', { className: 'rb-item-v' },
+                snapshot.providerLabel
+                  ? tag(snapshot.providerLabel, 'ok')
+                  : tag(snapshot.provider ? snapshot.provider : t('providerUnknown'),
+                    snapshot.status === 'ok' || snapshot.status === 'partial' ? 'muted' : 'warn'))),
             h('div', { className: 'rb-item' },
               h('span', { className: 'rb-item-k' }, t('runtime')),
               h('span', { className: 'rb-item-v' },
