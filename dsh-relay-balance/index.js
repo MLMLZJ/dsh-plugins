@@ -31,7 +31,7 @@ const DEFAULTS = {
 
 const CREDENTIAL_FIELDS = ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']
 const MAX_BODY_BYTES = 16 * 1024
-const PLUGIN_VERSION = '3.5.0'
+const PLUGIN_VERSION = '3.5.1'
 
 function stateRoot() {
   const home = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ''
@@ -210,7 +210,8 @@ export function apply(ctx, config = {}) {
       let balance = null
       let provider = 'new-api'
       let stats = null
-      let sub2apiCurrency = ''
+      let detectedCurrency = ''
+      let accountName = null
       if (base === '') {
         const officialOnly = await fetchOfficial()
         refreshedAt = Date.now()
@@ -242,7 +243,8 @@ export function apply(ctx, config = {}) {
         usage = detected.result.usage
         balance = detected.result.balance
         stats = detected.result.stats
-        sub2apiCurrency = detected.result.currency || ''
+        detectedCurrency = detected.result.currency || ''
+        accountName = detected.result.account || null
       }
       for (const error of detected.errors || []) errors.push(error)
       const official = await fetchOfficial()
@@ -263,11 +265,16 @@ export function apply(ctx, config = {}) {
         missing,
         provider,
         providerLabel: detected.adapter ? detected.adapter.label : null,
+        account: accountName,
         stats,
-        currency: provider === 'sub2api' && sub2apiCurrency !== ''
-          ? sub2apiCurrency
-          : (typeof credential.currency === 'string' && credential.currency !== ''
-            ? credential.currency
+        // Priority: an explicit user override, then whatever the adapter detected,
+        // then the plugin-level default. Keeping the adapter value here means a
+        // site that reports its own unit (sub2api `unit`, new-api `balance_unit`)
+        // renders the right symbol without any configuration.
+        currency: typeof credential.currency === 'string' && credential.currency !== ''
+          ? credential.currency
+          : (detectedCurrency !== ''
+            ? detectedCurrency
             : (typeof settings.currency === 'string' ? settings.currency : '')),
         official,
         apiBaseUrl: base,

@@ -28,8 +28,15 @@
 | --- | --- | --- |
 | **sub2api**（卡扣AI 等） | `GET /v1/usage` | 余额、今日/累计实付、请求数、rpm、当前模型 |
 | **OpenRouter** | `GET /api/v1/key` | 余额、额度上限、已用 |
-| **new-api / one-api** 系列 | `GET /v1/dashboard/billing/usage` | 已用金额（分 → 货币）；余额需站点登录态 |
+| **new-api / one-api** 系列（如 kekeai） | `GET /v1/dashboard/billing/usage` | 已用金额（分 → 货币）、账号名、站点自报的余额与货币单位 |
 | **通用 OpenAI 兼容** | `GET /v1/models` | 仅验证地址与 Key 有效，不显示金额 |
+
+new-api 系列分两种情况：
+
+- **只填 API Key** → 只读到「已用金额」
+- **再填系统访问令牌或 Cookie** → 额外读到「余额 + 账号名 + 货币符号」
+
+较新的 new-api 分支（如 kekeai）会在 `/api/user/self` 里直接返回 `balance` 和 `balance_unit`，插件优先用站点自报值；老版本没有这两个字段时，才回退到 `quota ÷ quotaPerUnit` 计算。
 
 sub2api 的 `/v1/usage` 只用 **API Key** 鉴权，**不需要**任何登录态、Cookie 或面板令牌——所以插件永远不会碰你的浏览器会话，退出登录、换设备、改密码都不影响取数。
 
@@ -119,11 +126,11 @@ dsh plugin --profile web remove dsh-relay-balance   # 卸载
 | sub2api | 余额 + 今日/累计实付 + 请求数 | `GET {apiBaseUrl}/v1/usage` | API Key |
 | OpenRouter | 余额 + 额度上限 | `GET {apiBaseUrl}/api/v1/key` | API Key |
 | new-api 系列 | 已用金额 | `GET {apiBaseUrl}/v1/dashboard/billing/usage` | API Key（`total_usage` 为「分」） |
-| new-api 系列 | 余额 | `GET {apiBaseUrl}/api/user/self` | Session Cookie 或 `Authorization: Bearer <accessToken>` |
+| new-api 系列 | 余额 + 账号 + 货币 | `GET {apiBaseUrl}/api/user/self` | Session Cookie 或 `Authorization: Bearer <accessToken>` |
 | 通用兼容 | 地址与 Key 有效性 | `GET {apiBaseUrl}/v1/models` | API Key |
 | 官方 | 官方余额 | Harness 账号服务 `deepseekAccount.getBalance()` | DSH 登录态 |
 
-new-api 系列的余额由 `quota ÷ quotaPerUnit` 得到货币金额。
+new-api 系列的余额优先取站点自报的 `balance`（配合 `balance_unit` 判断货币）；站点没提供时才用 `quota ÷ quotaPerUnit` 计算。
 
 ### 探测顺序与失败行为
 

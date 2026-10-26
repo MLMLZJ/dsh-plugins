@@ -1,6 +1,6 @@
 {
   "name": "dsh-relay-balance",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "type": "module",
   "description": "Relay usage and balance widget for DeepSeek Harness: a draggable Apple-style liquid-glass card plus a settings page, with auto-detection for sub2api, new-api/one-api, OpenRouter and other OpenAI-compatible relays, plus the official DeepSeek account balance.",
   "exports": {

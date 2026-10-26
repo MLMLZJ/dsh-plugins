@@ -450,7 +450,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.5.0'
+    const MODULE_VERSION = '3.5.1'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
 
     function blurSupport() {
@@ -962,7 +962,9 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
                 snapshot.providerLabel
                   ? tag(snapshot.providerLabel, 'ok')
                   : tag(snapshot.provider ? snapshot.provider : t('providerUnknown'),
-                    snapshot.status === 'ok' || snapshot.status === 'partial' ? 'muted' : 'warn'))),
+                    snapshot.status === 'ok' || snapshot.status === 'partial' ? 'muted' : 'warn'),
+                snapshot.account ? ' ' : null,
+                snapshot.account ? tag(snapshot.account, 'muted') : null)),
             h('div', { className: 'rb-item' },
               h('span', { className: 'rb-item-k' }, t('runtime')),
               h('span', { className: 'rb-item-v' },

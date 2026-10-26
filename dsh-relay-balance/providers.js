@@ -222,6 +222,9 @@ export const newApi = {
     let remaining = null
     let quota = null
     let usedQuota = null
+    let siteBalance = null
+    let siteUnit = ''
+    let displayName = null
     let balanceState = 'absent'
     const headers = {}
     if (cookie) headers.cookie = cookie
@@ -234,7 +237,18 @@ export const newApi = {
         if (data) {
           quota = numberOrUndefined(data.quota)
           usedQuota = numberOrUndefined(data.used_quota)
-          if (quota !== undefined) {
+          if (typeof data.username === 'string' && data.username.trim() !== '') {
+            displayName = data.username.trim()
+          }
+          // Newer forks pre-compute the balance and its unit; trust those over
+          // dividing quota by a quotaPerUnit that may not match the site.
+          siteBalance = numberOrUndefined(data.balance)
+          if (typeof data.balance_unit === 'string') siteUnit = data.balance_unit.trim()
+
+          if (siteBalance !== undefined) {
+            remaining = siteBalance
+            balanceState = 'ok'
+          } else if (quota !== undefined) {
             remaining = quota / quotaPerUnit
             balanceState = 'ok'
           }
@@ -250,9 +264,14 @@ export const newApi = {
       return { error: { code: 'KEY_UNAUTHORIZED', message: 'API Key 被拒绝：可能已失效、被禁用，或不是该站点的 Key' } }
     }
 
+    // `balance_unit` is a symbol such as "$" or "¥"; map the common ones onto an
+    // ISO code so the page and the currency override stay consistent.
+    const UNIT_TO_ISO = { $: 'USD', 'US$': 'USD', '¥': 'CNY', '￥': 'CNY', '€': 'EUR', '£': 'GBP' }
+
     return {
       provider: 'new-api',
-      currency: '',
+      currency: UNIT_TO_ISO[siteUnit] ?? '',
+      account: displayName,
       balance: {
         remaining,
         used: usageAmount,
@@ -260,6 +279,7 @@ export const newApi = {
         quota,
         usedQuota,
         perUnit: quotaPerUnit,
+        reported: siteBalance !== null,
       },
       usage: usageAmount === null ? null : { cents: usageAmount * 100, amount: usageAmount },
       stats: null,
