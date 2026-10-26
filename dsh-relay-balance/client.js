@@ -149,8 +149,8 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 .rb-title{font-weight:600;font-size:11.5px;letter-spacing:.2px;white-space:nowrap}
 .rb-collapsed-amount{font-size:11.5px;font-weight:600;color:var(--dsw-alias-label-secondary);margin-left:1px}
 .rb-flex{flex:1}
-.rb-actions{display:flex;gap:1px;opacity:0;transition:opacity .18s ease}
-.rb-card:hover .rb-actions,.rb-card:focus-within .rb-actions{opacity:1}
+.rb-card-actions{display:flex;gap:1px;opacity:0;transition:opacity .18s ease}
+.rb-card:hover .rb-card-actions,.rb-card:focus-within .rb-card-actions{opacity:1}
 .rb-icon{width:17px;height:17px;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);display:grid;place-items:center;cursor:pointer;padding:0;transition:background .15s,color .15s}
 .rb-icon:hover{background:rgba(127,127,127,.14);color:var(--dsw-alias-label-primary)}
 .rb-icon:active{transform:scale(.94)}
@@ -207,12 +207,12 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 .rb-form{display:flex;flex-direction:column;gap:16px;border-top:.5px solid var(--dsw-alias-border-l1);padding-top:16px}
 .rb-field{display:flex;flex-direction:column;gap:6px}
 .rb-field-label{font-size:12px;font-weight:500;letter-spacing:.15px}
-.rb-input{box-sizing:border-box;width:100%;height:36px;padding:0 12px;border-radius:10px;border:1px solid transparent;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;letter-spacing:.1px;transition:background .15s,border-color .15s,box-shadow .15s}
+.rb-input{box-sizing:border-box;width:100%;height:36px;padding:0 12px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;letter-spacing:.1px;transition:background .15s,border-color .15s,box-shadow .15s}
 .rb-input::placeholder{color:var(--dsw-alias-label-secondary);opacity:.6}
-.rb-input:hover{background:var(--dsw-alias-bg-layer-1)}
+.rb-input:hover{border-color:var(--dsw-alias-label-secondary)}
 .rb-input:focus{outline:0;background:var(--dsw-alias-bg-layer-1);border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 3px rgba(59,130,246,.14);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent)}
 .rb-hint{margin:0;font-size:11px;line-height:17px;letter-spacing:.1px;color:var(--dsw-alias-label-secondary)}
-.rb-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.rb-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;opacity:1}
 .rb-btn{height:34px;padding:0 18px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;letter-spacing:.3px;cursor:pointer;transition:background .15s,border-color .15s,transform .06s,filter .15s}
 .rb-btn:hover{background:rgba(127,127,127,.10)}
 .rb-btn:active{transform:translateY(1px)}
@@ -227,7 +227,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 .rb-switch[data-on="true"] .rb-knob{transform:translateX(16px)}
 @keyframes rb-in{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
 @keyframes rb-pulse{0%,100%{opacity:1}50%{opacity:.3}}
-@media (hover:none){.rb-grip{opacity:.4}.rb-actions,.rb-foot .rb-icon{opacity:1}}
+@media (hover:none){.rb-grip{opacity:.4}.rb-card-actions,.rb-foot .rb-icon{opacity:1}}
 @media (prefers-reduced-motion:reduce){.rb-card,.rb-dot{animation:none}.rb-icon,.rb-btn,.rb-switch,.rb-knob,.rb-tab{transition:none}}
 `
 
@@ -438,7 +438,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.4.0'
+    const MODULE_VERSION = '3.4.1'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
 
     function blurSupport() {
@@ -752,7 +752,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         h('span', { className: 'rb-title' }, t('title')),
         card.collapsed ? h('span', { className: 'rb-collapsed-amount' }, `${amountSign}${amountText}`) : null,
         h('span', { className: 'rb-flex' }),
-        h('div', { className: 'rb-actions' },
+        h('div', { className: 'rb-card-actions' },
           h('button', {
             type: 'button',
             className: 'rb-icon',
