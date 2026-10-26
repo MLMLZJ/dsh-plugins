@@ -17,7 +17,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import { detectProvider, normalizeBase, numberOrUndefined } from './providers.js'
+import { createDetectorCache, normalizeBase, numberOrUndefined } from './providers.js'
 
 export const name = 'dsh-relay-balance'
 export const inject = ['webServer', 'credentials']
@@ -31,7 +31,7 @@ const DEFAULTS = {
 
 const CREDENTIAL_FIELDS = ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']
 const MAX_BODY_BYTES = 16 * 1024
-const PLUGIN_VERSION = '3.5.2'
+const PLUGIN_VERSION = '3.6.0'
 
 function stateRoot() {
   const home = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== ''
@@ -119,6 +119,9 @@ export function apply(ctx, config = {}) {
   let inFlight = null
   let disposed = false
   let resolvedKeyCache = { value: '', at: 0 }
+  // Remembers which adapter claimed the site so a steady refresh does not walk
+  // the whole probe chain every minute.
+  const detector = createDetectorCache()
 
   async function loadCredential() {
     credential = await readJsonFile(credentialPath)
@@ -148,10 +151,10 @@ export function apply(ctx, config = {}) {
    * Ask the provider adapters what this site is and how much money is left.
    * Returns the normalised result, or a reason why every adapter declined.
    */
-  async function fetchRelay() {
+  async function fetchRelay({ force = false } = {}) {
     const timeoutMs = settings.timeoutMs
     const quotaPerUnit = numberOrUndefined(credential.quotaPerUnit) ?? numberOrUndefined(settings.quotaPerUnit) ?? DEFAULTS.quotaPerUnit
-    const detected = await detectProvider({
+    const detected = await detector.detect({
       apiBaseUrl: relayBase(),
       apiKey: await apiKeyOf(),
       cookie: typeof credential.cookie === 'string' ? credential.cookie.trim() : '',
@@ -159,7 +162,7 @@ export function apply(ctx, config = {}) {
       userId: typeof credential.userId === 'string' ? credential.userId.trim() : '',
       quotaPerUnit,
       timeoutMs,
-    })
+    }, { force })
     return detected
   }
   /** Official DeepSeek wallets, read through the account service so the Host owns the grant. */
@@ -201,7 +204,7 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  async function refresh() {
+  async function refresh({ force = false } = {}) {
     if (inFlight) return inFlight
     const base = relayBase()
     inFlight = (async () => {
@@ -212,6 +215,7 @@ export function apply(ctx, config = {}) {
       let stats = null
       let detectedCurrency = ''
       let accountName = null
+      let guidance = null
       if (base === '') {
         const officialOnly = await fetchOfficial()
         refreshedAt = Date.now()
@@ -233,7 +237,7 @@ export function apply(ctx, config = {}) {
       // Hand the site to the provider adapters: they probe in order of specificity
       // and the first one that recognises it wins. A provider that reports an
       // explicit error (bad key, missing balance credential) stops the probe run.
-      const detected = await fetchRelay().catch((error) => ({
+      const detected = await fetchRelay({ force }).catch((error) => ({
         adapter: null,
         result: null,
         errors: [{ code: 'PROBE_FAILED', message: String((error && error.message) || error) }],
@@ -245,6 +249,12 @@ export function apply(ctx, config = {}) {
         stats = detected.result.stats
         detectedCurrency = detected.result.currency || ''
         accountName = detected.result.account || null
+        if (detected.adapter) {
+          guidance = {
+            uses: detected.adapter.uses || [],
+            optional: detected.adapter.optional || [],
+          }
+        }
       }
       for (const error of detected.errors || []) errors.push(error)
       const official = await fetchOfficial()
@@ -266,6 +276,7 @@ export function apply(ctx, config = {}) {
         provider,
         providerLabel: detected.adapter ? detected.adapter.label : null,
         account: accountName,
+        guidance,
         stats,
         // Priority: an explicit user override, then whatever the adapter detected,
         // then the plugin-level default. Keeping the adapter value here means a
@@ -356,6 +367,8 @@ export function apply(ctx, config = {}) {
           credential = next
           await mkdir(root, { recursive: true, mode: 0o700 })
           await writeJsonFile(credentialPath, credential)
+          // The site or key may have changed, so the memoised adapter is stale.
+          detector.invalidate()
           refreshedAt = 0
           reply(res, 200, { saved: true, credential: await credentialView() })
         } catch (error) {
@@ -382,12 +395,50 @@ export function apply(ctx, config = {}) {
         }
         try {
           refreshedAt = 0
-          reply(res, 200, await refresh())
+          reply(res, 200, await refresh({ force: true }))
         } catch (error) {
           reply(res, 500, { error: { code: 'REFRESH_FAILED', message: String((error && error.message) || error) } })
         }
       },
     }), 'relay-balance: refresh route')
+
+    // Explicit "test connection": re-probes the whole chain from scratch and
+    // reports what it found, including which credential fields this site needs.
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'exact',
+      path: '/relay-balance/test',
+      handler: async (req, res) => {
+        if (!isLoopback(req)) {
+          reply(res, 403, { error: { code: 'FORBIDDEN', message: 'loopback only' } })
+          return
+        }
+        if (req.method !== 'POST') {
+          reply(res, 405, { error: { code: 'METHOD', message: 'POST only' } })
+          return
+        }
+        try {
+          detector.invalidate()
+          refreshedAt = 0
+          const result = await refresh({ force: true })
+          reply(res, 200, {
+            status: result.status,
+            provider: result.provider,
+            providerLabel: result.providerLabel,
+            account: result.account,
+            currency: result.currency,
+            // Which fields this site reads, so the page can explain the form.
+            uses: result.guidance ? result.guidance.uses : null,
+            optional: result.guidance ? result.guidance.optional : null,
+            hasBalance: Boolean(result.balance && result.balance.remaining !== null),
+            hasUsage: Boolean(result.usage),
+            errors: result.errors,
+            error: result.error,
+          })
+        } catch (error) {
+          reply(res, 500, { error: { code: 'TEST_FAILED', message: String((error && error.message) || error) } })
+        }
+      },
+    }), 'relay-balance: test route')
 
     webCtx.effect(() => {
       const timer = setInterval(() => {

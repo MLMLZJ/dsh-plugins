@@ -93,6 +93,9 @@ export const sub2api = {
   id: 'sub2api',
   label: 'sub2api (kakouai 等)',
   needsKey: true,
+  // Credential fields this adapter actually reads. The settings page uses this
+  // to tell the user which fields matter here and which can stay empty.
+  uses: ['apiBaseUrl', 'apiKey'],
   async detect({ base, apiKey, timeoutMs }) {
     if (!apiKey) return null
     const result = await requestJson(`${base}/v1/usage`, {
@@ -152,6 +155,7 @@ export const openrouter = {
   id: 'openrouter',
   label: 'OpenRouter',
   needsKey: true,
+  uses: ['apiBaseUrl', 'apiKey'],
   async detect({ base, apiKey, timeoutMs }) {
     if (!apiKey) return null
     const result = await requestJson(`${base}/api/v1/key`, {
@@ -198,6 +202,10 @@ export const newApi = {
   id: 'new-api',
   label: 'new-api / one-api 系列',
   needsKey: true,
+  // Balance additionally needs a panel credential, but the site is still usable
+  // with just a key, so this is the "sufficient" set rather than the "complete" one.
+  uses: ['apiBaseUrl', 'apiKey'],
+  optional: ['accessToken', 'cookie', 'userId', 'quotaPerUnit'],
   async detect({ base, apiKey, cookie, accessToken, userId, quotaPerUnit, timeoutMs }) {
     let usageAmount = null
     let usageState = 'absent'
@@ -298,6 +306,7 @@ export const generic = {
   id: 'generic',
   label: 'OpenAI 兼容站点',
   needsKey: true,
+  uses: ['apiBaseUrl', 'apiKey'],
   async detect({ base, apiKey, timeoutMs }) {
     if (!apiKey) return null
     const result = await requestJson(`${base}/v1/models`, {
@@ -357,4 +366,72 @@ export async function detectProvider(options) {
     errors.push({ code: 'KEY_UNAUTHORIZED', message: 'API Key 被拒绝：可能已失效、被禁用，或不是该站点的 Key' })
   }
   return { adapter: null, result: null, errors, reachable }
+}
+
+/**
+ * Memoise which adapter claimed a site.
+ *
+ * Without this, every refresh walks the whole chain: a site that matches the
+ * last adapter costs four round trips, and an unreachable host costs four
+ * timeouts every minute. The cache only remembers the *identity* of the winner,
+ * never the balance, so a stale entry cannot show stale money.
+ *
+ * A hit is remembered for `ttlMs`; a miss for `missTtlMs` so a freshly typed
+ * address is retried soon instead of being stuck wrong for a whole minute.
+ */
+export function createDetectorCache({ ttlMs = 600000, missTtlMs = 30000 } = {}) {
+  let entry = null
+
+  return {
+    /** Drop the memoised adapter, e.g. when the address or key changes. */
+    invalidate() {
+      entry = null
+    },
+
+    /** What is cached right now, for diagnostics. */
+    peek() {
+      return entry ? { ...entry } : null
+    },
+
+    /**
+     * Detect, reusing a cached winner when the configuration is unchanged.
+     * `force` bypasses the cache, which is what an explicit "test connection" wants.
+     */
+    async detect(options, { force = false } = {}) {
+      const base = originOf(options.apiBaseUrl)
+      // The key is part of the identity: switching keys on the same host must
+      // re-probe, because a key can be scoped to a different protocol.
+      const signature = `${base}\u0000${options.apiKey || ''}\u0000${options.accessToken || ''}\u0000${options.cookie || ''}`
+
+      if (!force && entry && entry.signature === signature) {
+        const age = Date.now() - entry.at
+        if (age < (entry.adapterId ? ttlMs : missTtlMs)) {
+          const adapter = entry.adapterId ? ADAPTERS.find((item) => item.id === entry.adapterId) ?? null : null
+          // A cached miss still has to report its original errors.
+          if (!adapter) return { adapter: null, result: null, errors: entry.errors, cached: true }
+          // Re-run only the winning adapter to fetch fresh numbers.
+          try {
+            const result = await adapter.detect({ ...options, base })
+            if (result && !result.error && !result.unauthorized) {
+              return { adapter, result, errors: [], cached: true }
+            }
+          } catch {
+            /* fall through to a full probe */
+          }
+          entry = null
+        } else {
+          entry = null
+        }
+      }
+
+      const detected = await detectProvider(options)
+      entry = {
+        signature,
+        adapterId: detected.adapter ? detected.adapter.id : null,
+        errors: detected.errors,
+        at: Date.now(),
+      }
+      return detected
+    },
+  }
 }

@@ -68,6 +68,21 @@ window.__ModuleLoader__.load({
       runtime: '运行环境',
       provider: '站点类型',
       providerUnknown: '未识别',
+      test: '测试连接',
+      detected: '已识别',
+      notDetected: '未识别该站点',
+      account: '账号',
+      neededFields: '需要填写',
+      optionalFields: '可选填写',
+      readable: '可读取',
+      partialHint: '站点已识别，但还缺少上面「可选填写」里的凭证，余额可能读不到',
+      'field.apiBaseUrl': '站点地址',
+      'field.apiKey': 'API Key',
+      'field.cookie': 'Cookie',
+      'field.accessToken': '访问令牌',
+      'field.userId': '用户 ID',
+      'field.quotaPerUnit': '配额换算单位',
+      'field.currency': '货币',
       blurYes: '毛玻璃可用',
       blurNo: '不支持模糊',
       refractYes: '折射',
@@ -138,6 +153,21 @@ window.__ModuleLoader__.load({
       runtime: 'Runtime',
       provider: 'Site type',
       providerUnknown: 'not recognised',
+      test: 'Test connection',
+      detected: 'Detected',
+      notDetected: 'Site not recognised',
+      account: 'Account',
+      neededFields: 'Required',
+      optionalFields: 'Optional',
+      readable: 'Readable',
+      partialHint: 'The site was recognised, but the optional credentials above are still missing, so the balance may not load',
+      'field.apiBaseUrl': 'site address',
+      'field.apiKey': 'API key',
+      'field.cookie': 'Cookie',
+      'field.accessToken': 'Access token',
+      'field.userId': 'User ID',
+      'field.quotaPerUnit': 'Quota per unit',
+      'field.currency': 'Currency',
       blurYes: 'blur supported',
       blurNo: 'no blur',
       refractYes: 'refraction',
@@ -225,6 +255,11 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 .rb-input:focus{outline:0;background:var(--dsw-alias-bg-layer-1);border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 3px rgba(59,130,246,.14);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 16%,transparent)}
 .rb-hint{margin:0;font-size:11px;line-height:17px;letter-spacing:.1px;color:var(--dsw-alias-label-secondary)}
 .rb-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;opacity:1}
+.rb-probe{margin-top:12px;padding:11px 13px;border-radius:10px;background:rgba(127,127,127,.07);border:1px solid rgba(127,127,127,.13);display:flex;flex-direction:column;gap:6px}
+.rb-probe-head{display:flex;align-items:center;gap:7px;font-size:12px;line-height:17px}
+.rb-probe-row{font-size:11px;line-height:17px;letter-spacing:.1px;color:var(--dsw-alias-label-secondary)}
+.rb-probe-muted{opacity:.72}
+.rb-probe-error{color:#d9534f}
 .rb-btn{height:34px;padding:0 18px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;letter-spacing:.3px;cursor:pointer;transition:background .15s,border-color .15s,transform .06s,filter .15s}
 .rb-btn:hover{background:rgba(127,127,127,.10)}
 .rb-btn:active{transform:translateY(1px)}
@@ -450,7 +485,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.5.2'
+    const MODULE_VERSION = '3.6.0'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
 
     function blurSupport() {
@@ -854,6 +889,8 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       const [form, setForm] = React.useState({ apiBaseUrl: '', apiKey: '', cookie: '', accessToken: '', userId: '', quotaPerUnit: '', currency: '' })
       const [busy, setBusy] = React.useState(false)
       const [notice, setNotice] = React.useState('')
+      // Result of the last explicit "test connection", or null before the first run.
+      const [probe, setProbe] = React.useState(null)
 
       const load = React.useCallback(async () => {
         try {
@@ -928,6 +965,35 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
           setSnapshot(await request('/relay-balance/refresh', { method: 'POST' }))
         } catch (error) {
           setNotice(`${t('failed')}: ${String((error && error.message) || error)}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      // Saves what is typed, then re-probes the site from scratch and reports
+      // which credential fields it actually reads.
+      const test = async () => {
+        setBusy(true)
+        setNotice('')
+        try {
+          const body = {}
+          for (const field of ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']) {
+            const value = form[field].trim()
+            if (value !== '') body[field] = value
+          }
+          if (Object.keys(body).length > 0) {
+            await request('/relay-balance/credential', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+          }
+          const result = await request('/relay-balance/test', { method: 'POST' })
+          setProbe(result)
+          setNotice('')
+          load()
+        } catch (error) {
+          setProbe({ status: 'error', errors: [{ code: 'TEST_FAILED', message: String((error && error.message) || error) }] })
         } finally {
           setBusy(false)
         }
@@ -1049,8 +1115,38 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
               onClick: save,
               disabled: busy,
             }, busy ? t('saving') : t('save')),
+            h('button', { type: 'button', className: 'rb-btn', onClick: test, disabled: busy }, t('test')),
             h('button', { type: 'button', className: 'rb-btn', onClick: refresh, disabled: busy }, t('refresh')),
-            notice ? h('span', { className: 'rb-hint' }, notice) : null)))
+            notice ? h('span', { className: 'rb-hint' }, notice) : null)),
+          probe ? h('div', { className: 'rb-probe' },
+            h('div', { className: 'rb-probe-head' },
+              h('span', { className: 'rb-dot', 'data-state': probe.providerLabel ? 'ok' : 'error' }),
+              h('b', null, probe.providerLabel
+                ? `${t('detected')}: ${probe.providerLabel}`
+                : t('notDetected'))),
+            probe.account ? h('div', { className: 'rb-probe-row' }, `${t('account')}: ${probe.account}`) : null,
+            // Which fields this site reads, so the form stops being guesswork.
+            probe.uses && probe.uses.length > 0
+              ? h('div', { className: 'rb-probe-row' },
+                `${t('neededFields')}: ${probe.uses.map((key) => t(`field.${key}`) || key).join('、')}`)
+              : null,
+            probe.optional && probe.optional.length > 0
+              ? h('div', { className: 'rb-probe-row rb-probe-muted' },
+                `${t('optionalFields')}: ${probe.optional.map((key) => t(`field.${key}`) || key).join('、')}`)
+              : null,
+            probe.providerLabel
+              ? h('div', { className: 'rb-probe-row rb-probe-muted' },
+                `${t('readable')}: ${[
+                  probe.hasBalance ? t('balance') : null,
+                  probe.hasUsage ? t('usage') : null,
+                ].filter(Boolean).join(' + ') || '—'}`)
+              : null,
+            (probe.errors || []).length > 0
+              ? h('div', { className: 'rb-probe-row rb-probe-error' }, probe.errors[0].message)
+              : null,
+            probe.providerLabel && probe.status !== 'ok'
+              ? h('div', { className: 'rb-probe-row rb-probe-muted' }, t('partialHint'))
+              : null) : null)
     }
 
     return {
