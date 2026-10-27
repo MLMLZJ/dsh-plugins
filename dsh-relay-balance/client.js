@@ -77,6 +77,8 @@ window.__ModuleLoader__.load({
       noSites: '还没有站点',
       noSitesHint: '点「添加站点」填入站点地址和 API Key。插件会自动识别站点类型，不需要你选协议。',
       lowBalance: '余额偏低',
+      prevSite: '上一个站点',
+      nextSite: '下一个站点',
       lowBalanceThreshold: '低余额提醒阈值',
       lowBalanceThresholdHint: '余额低于该值时卡片会提示，留空表示不提醒',
       siteName: '站点名称',
@@ -174,6 +176,8 @@ window.__ModuleLoader__.load({
       noSites: 'No sites yet',
       noSitesHint: 'Click "Add site" and enter the address plus an API key. The plugin detects the site type on its own, so there is no protocol to pick.',
       lowBalance: 'Low balance',
+      prevSite: 'Previous site',
+      nextSite: 'Next site',
       lowBalanceThreshold: 'Low balance threshold',
       lowBalanceThresholdHint: 'Warn on the card when the balance drops below this value; leave empty to disable',
       siteName: 'Site name',
@@ -295,10 +299,18 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 .rb-btn--danger{color:#d9534f;border-color:rgba(217,83,79,.4)}
 .rb-btn--danger:hover{background:rgba(217,83,79,.10)}
 .rb-editor{margin-top:4px}
-.rb-sites{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 6px}
-.rb-site-chip{max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 9px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:10.5px;letter-spacing:.2px;cursor:pointer}
-.rb-site-chip[data-active="true"]{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary)}
-.rb-site-chip[data-low="true"]{border-color:rgba(217,83,79,.6);color:#d9534f}
+.rb-pager{display:flex;align-items:center;gap:2px;margin:1px 0 3px;min-height:20px}
+.rb-pager-arrow{flex:0 0 auto;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:15px;line-height:1;cursor:pointer;padding:0;transition:background .14s,color .14s}
+.rb-pager-arrow:hover{background:rgba(127,127,127,.14);color:var(--dsw-alias-label-primary)}
+.rb-pager-mid{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px}
+.rb-pager-name{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;letter-spacing:.3px;color:var(--dsw-alias-label-secondary)}
+.rb-pager-dots{display:flex;align-items:center;justify-content:center;gap:4px}
+.rb-page-dot{width:5px;height:5px;padding:0;border:0;border-radius:50%;background:var(--dsw-alias-border-l2);cursor:pointer;transition:background .16s,transform .16s,width .16s}
+.rb-page-dot[data-low="true"]{background:rgba(217,83,79,.65)}
+.rb-page-dot[data-active="true"]{width:13px;border-radius:3px;background:var(--dsw-alias-brand-primary)}
+@keyframes rb-flip{from{opacity:0;transform:translateX(9px)}to{opacity:1;transform:translateX(0)}}
+.rb-amount{animation:rb-flip .2s ease-out}
+@media (prefers-reduced-motion: reduce){.rb-amount{animation:none}}
 .rb-alert[data-kind="warn"]{color:#b8860b;border-color:rgba(184,134,11,.35)}
 .rb-dot[data-state="warn"]{background:#e0a800}
 .rb-btn{height:34px;padding:0 18px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;letter-spacing:.3px;cursor:pointer;transition:background .15s,border-color .15s,transform .06s,filter .15s}
@@ -877,23 +889,55 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         alerts.push(h('div', { className: 'rb-alert', key: 'offerr', 'data-kind': 'error' }, t('failed')))
       }
 
-      // With more than one site, a chip row lets the card switch without a trip
-      // to the settings page.
-      const siteChips = tab === 'relay' && sites.length > 1
-        ? h('div', { className: 'rb-sites' }, ...sites.map((site) => h('button', {
-          type: 'button',
-          key: site.id,
-          className: 'rb-site-chip',
-          'data-active': site.id === (active ? active.id : '') ? 'true' : 'false',
-          'data-low': site.low ? 'true' : 'false',
-          title: site.apiBaseUrl || site.name,
-          onPointerDown: (event) => event.stopPropagation(),
-          onClick: () => request('/relay-balance/site', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ action: 'activate', id: site.id }),
-          }).then(load).catch(() => {}),
-        }, site.name)))
+      // Page-flip navigation: the card shows one site at a time, with arrows and
+      // dots to turn the page. Switching updates the local snapshot first so the
+      // flip feels instant, then persists the choice on the Host.
+      const siteIndex = active ? Math.max(0, sites.findIndex((site) => site.id === active.id)) : 0
+      const flipTo = (nextIndex) => {
+        if (sites.length < 2) return
+        const bounded = (nextIndex + sites.length) % sites.length
+        const target = sites[bounded]
+        if (!target || (active && target.id === active.id)) return
+        setSnapshot((current) => ({ ...current, activeId: target.id }))
+        request('/relay-balance/site', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'activate', id: target.id }),
+        }).then(load).catch(() => load())
+      }
+
+      const sitePager = tab === 'relay' && sites.length > 1
+        ? h('div', { className: 'rb-pager' },
+          h('button', {
+            type: 'button',
+            className: 'rb-pager-arrow',
+            title: t('prevSite'),
+            'aria-label': t('prevSite'),
+            onPointerDown: (event) => event.stopPropagation(),
+            onClick: () => flipTo(siteIndex - 1),
+          }, '‹'),
+          h('div', { className: 'rb-pager-mid' },
+            h('span', { className: 'rb-pager-name', title: active ? active.apiBaseUrl || active.name : '' },
+              active ? active.name : t('noSites')),
+            h('div', { className: 'rb-pager-dots' }, ...sites.map((site, index) => h('button', {
+              type: 'button',
+              key: site.id,
+              className: 'rb-page-dot',
+              'data-active': index === siteIndex ? 'true' : 'false',
+              'data-low': site.low ? 'true' : 'false',
+              title: site.name,
+              'aria-label': site.name,
+              onPointerDown: (event) => event.stopPropagation(),
+              onClick: () => flipTo(index),
+            })))),
+          h('button', {
+            type: 'button',
+            className: 'rb-pager-arrow',
+            title: t('nextSite'),
+            'aria-label': t('nextSite'),
+            onPointerDown: (event) => event.stopPropagation(),
+            onClick: () => flipTo(siteIndex + 1),
+          }, '›'))
         : null
 
       const body = card.collapsed ? null : h('div', { className: 'rb-body' },
@@ -913,8 +957,14 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
             onClick: () => updateCard({ tab: 'relay' }),
           }, t('relay')),
           h('span', { className: 'rb-updated' }, updated || t('never'))),
-        siteChips,
-        h('div', { className: 'rb-amount', title: amountTitle || undefined },
+        sitePager,
+        // Keyed by the active site so the flip animation replays when the page
+        // turns; without the key React would reuse the node and nothing moves.
+        h('div', {
+          className: 'rb-amount',
+          key: tab === 'official' ? 'official' : `site-${active ? active.id : 'none'}`,
+          title: amountTitle || undefined,
+        },
           amountSign ? h('span', { className: 'rb-cur' }, amountSign) : null,
           h('span', { className: `rb-num${long ? ' rb-num--sm' : ''}` }, amountText),
           h('span', { className: 'rb-caption' }, amountLabel)),
