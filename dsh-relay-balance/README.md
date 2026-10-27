@@ -42,14 +42,16 @@ sub2api 的 `/v1/usage` 只用 **API Key** 鉴权，**不需要**任何登录态
 
 ## 功能
 
+- **多站点**：可同时配置多个中转站，卡片顶部点标签切换；每个站点独立读取余额、独立缓存
+- **低余额提醒**：给站点设一个阈值，余额低于它时卡片和设置页都会标黄提示
 - **自动识别站点**：只填地址和 Key，插件自己判断是哪类中转站
 - **测试连接**：点一下就重新探测站点，并告诉你这个站**需要填哪些字段、哪些留空即可**
 - **探测结果缓存**：记住站点类型，之后每次刷新只打 1 个接口（冷启动 4 个 → 稳定后 1 个）
 - **金额精度**：卡片用两位小数排版，**鼠标悬停即可看到站点返回的完整位数**（如 `$46.21572879`）；余额再小也不会被显示成 `0`，`0.00001234` 会显示为 `0.00001`
-- **设置页「中转用量」**：官方 / 中转双栏总览、站点类型、已用金额与余额、凭证管理、悬浮卡片开关
-- **浮窗卡片**：拖动（位置记忆）、官方/中转切换、折叠、关闭、60 秒自动刷新、鼠标悬停刷新
+- **设置页「中转用量」**：官方 / 中转双栏总览、站点增删改与切换、站点类型、已用金额与余额、悬浮卡片开关
+- **浮窗卡片**：拖动（位置记忆）、官方/中转切换、多站点切换、折叠、关闭、60 秒自动刷新
 - **两种余额来源并存**：官方余额走 Harness 的账号服务，中转余额走站点 API
-- **凭证只在本机**：明文只写入 Host 侧的 `credential.json`，浏览器只拿得到「是否已配置」
+- **凭证只在本机**：明文只写入 Host 侧的 `sites.json`，浏览器只拿得到「是否已配置」
 - **玻璃质感**：SVG `feDisplacementMap` 边缘折射 + 镜面渐变描边（同 Apple Liquid Glass 的做法），非 Chromium 内核自动退回普通背景模糊
 - **中英双语**：跟随 Harness 的界面语言
 
@@ -108,19 +110,25 @@ dsh plugin --profile web remove dsh-relay-balance   # 卸载
 | `refreshMs` | `60000` | 后台刷新间隔 |
 | `timeoutMs` | `15000` | 单个请求超时 |
 
-### 凭证（在设置页里填，不需要改文件）
+### 站点（在设置页里增删改，不需要改文件）
+
+每个站点有自己的一套字段，互不影响：
 
 | 字段 | 用途 |
 | --- | --- |
-| `apiBaseUrl` | 中转站地址，例如 `https://relay.example.com`。**必填**；填在设置页里，优先于插件 Config。填 API 域名而不是网页地址（如 `https://api.kakouai.com`，不是 `https://kakouai.com/dashboard`） |
+| `name` | 站点显示名，留空自动取域名（如 `kakouai.com`） |
+| `apiBaseUrl` | 中转站地址，例如 `https://api.kakouai.com`。**必填**。填 API 域名而不是网页地址（不是 `https://kakouai.com/dashboard`） |
 | `apiKey` | **sub2api / new-api / OpenRouter 都靠它取数**。留空则回落到 DSH 里已配置的 `DEEPSEEK_CLASH_API_KEY` |
-| `cookie` | 仅 new-api 系列读余额时需要，站点 `session` 值（登录后 F12 → Application → Cookies） |
 | `accessToken` | 仅 new-api 系列读余额时需要，站点「个人设置 → 系统访问令牌」 |
+| `cookie` | 仅 new-api 系列读余额时需要，站点 `session` 值（登录后 F12 → Application → Cookies） |
+| `lowBalanceThreshold` | 低余额提醒阈值，留空不提醒 |
 | `userId` | 站点要求 `new-api-user` 头时填写 |
 | `quotaPerUnit` | 仅 new-api 系列的配额换算单位（1 货币单位 = 多少 quota） |
 | `currency` | 覆盖货币符号：`CNY` 显示 ¥、`USD` 显示 $、留空则用站点返回值 |
 
 > sub2api 与 OpenRouter 返回的金额**已经是货币单位**，`quotaPerUnit` 对它们不生效。
+
+站点保存在 `<DSH_HOME>/relay-balance/sites.json`。从 3.6 及更早版本升级时，原来的单站点 `credential.json` 会自动迁移成一个站点，**旧文件保留不删**，迁移出错可手工回退。
 
 ## 数据来源
 

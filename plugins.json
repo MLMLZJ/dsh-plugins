@@ -31,7 +31,7 @@
       "path": "dsh-relay-balance",
       "rowId": "relay-balance",
       "skill": null,
-      "version": "3.6.0",
+      "version": "3.7.0",
       "platform": "any",
       "summary": "Draggable liquid-glass card and settings page showing a third-party relay's used/remaining balance plus the official DeepSeek account balance. Auto-detects sub2api (kakouai), new-api/one-api, OpenRouter and generic OpenAI-compatible sites; credentials stay on the host."
     }

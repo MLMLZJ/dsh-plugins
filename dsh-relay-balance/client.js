@@ -69,6 +69,18 @@ window.__ModuleLoader__.load({
       provider: '站点类型',
       providerUnknown: '未识别',
       test: '测试连接',
+      cancel: '取消',
+      edit: '编辑',
+      remove: '删除',
+      addSite: '添加站点',
+      sitesSection: '中转站点',
+      noSites: '还没有站点',
+      noSitesHint: '点「添加站点」填入站点地址和 API Key。插件会自动识别站点类型，不需要你选协议。',
+      lowBalance: '余额偏低',
+      lowBalanceThreshold: '低余额提醒阈值',
+      lowBalanceThresholdHint: '余额低于该值时卡片会提示，留空表示不提醒',
+      siteName: '站点名称',
+      siteNameHint: '留空则自动用域名，例如 kakouai.com',
       detected: '已识别',
       notDetected: '未识别该站点',
       account: '账号',
@@ -154,6 +166,18 @@ window.__ModuleLoader__.load({
       provider: 'Site type',
       providerUnknown: 'not recognised',
       test: 'Test connection',
+      cancel: 'Cancel',
+      edit: 'Edit',
+      remove: 'Delete',
+      addSite: 'Add site',
+      sitesSection: 'Relay sites',
+      noSites: 'No sites yet',
+      noSitesHint: 'Click "Add site" and enter the address plus an API key. The plugin detects the site type on its own, so there is no protocol to pick.',
+      lowBalance: 'Low balance',
+      lowBalanceThreshold: 'Low balance threshold',
+      lowBalanceThresholdHint: 'Warn on the card when the balance drops below this value; leave empty to disable',
+      siteName: 'Site name',
+      siteNameHint: 'Leave empty to use the hostname, e.g. kakouai.com',
       detected: 'Detected',
       notDetected: 'Site not recognised',
       account: 'Account',
@@ -260,6 +284,23 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 .rb-probe-row{font-size:11px;line-height:17px;letter-spacing:.1px;color:var(--dsw-alias-label-secondary)}
 .rb-probe-muted{opacity:.72}
 .rb-probe-error{color:#d9534f}
+.rb-site-list{display:flex;flex-direction:column;gap:8px;margin-bottom:4px}
+.rb-site-row{display:flex;align-items:center;gap:8px;padding:9px 11px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2);background:transparent}
+.rb-site-row[data-active="true"]{border-color:var(--dsw-alias-brand-primary);background:rgba(127,127,127,.06)}
+.rb-site-row[data-low="true"]{border-color:rgba(217,83,79,.55)}
+.rb-site-pick{flex:1;display:flex;align-items:center;gap:8px;min-width:0;background:transparent;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
+.rb-site-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;letter-spacing:.2px}
+.rb-site-bal{font-size:12.5px;font-variant-numeric:tabular-nums;opacity:.85;white-space:nowrap}
+.rb-btn--mini{height:26px;padding:0 11px;font-size:11.5px;border-radius:8px}
+.rb-btn--danger{color:#d9534f;border-color:rgba(217,83,79,.4)}
+.rb-btn--danger:hover{background:rgba(217,83,79,.10)}
+.rb-editor{margin-top:4px}
+.rb-sites{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 6px}
+.rb-site-chip{max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 9px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:10.5px;letter-spacing:.2px;cursor:pointer}
+.rb-site-chip[data-active="true"]{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-brand-primary)}
+.rb-site-chip[data-low="true"]{border-color:rgba(217,83,79,.6);color:#d9534f}
+.rb-alert[data-kind="warn"]{color:#b8860b;border-color:rgba(184,134,11,.35)}
+.rb-dot[data-state="warn"]{background:#e0a800}
 .rb-btn{height:34px;padding:0 18px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;letter-spacing:.3px;cursor:pointer;transition:background .15s,border-color .15s,transform .06s,filter .15s}
 .rb-btn:hover{background:rgba(127,127,127,.10)}
 .rb-btn:active{transform:translateY(1px)}
@@ -485,7 +526,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.6.0'
+    const MODULE_VERSION = '3.7.0'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
 
     function blurSupport() {
@@ -641,6 +682,26 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       return { tone: 'idle', text: String(status) }
     }
 
+    /**
+     * Status line for a single site. A low balance outranks a healthy read: the
+     * point of the threshold is to be visible even when everything else is fine.
+     */
+    function siteStatusInfo(site, t) {
+      if (!site) return { tone: 'idle', text: t('noSites') }
+      if (site.low) return { tone: 'warn', text: t('lowBalance') }
+      const status = site.status
+      if (!status || status === 'loading') return { tone: 'loading', text: t('loading') }
+      if (status === 'ok') return { tone: 'ok', text: t('live') }
+      if (status === 'partial') {
+        if (!site.hasApiKey) return { tone: 'partial', text: t('needKey') }
+        if (site.error && site.error.message) return { tone: 'partial', text: site.error.message }
+        return { tone: 'partial', text: t('partial') }
+      }
+      if (status === 'idle') return { tone: 'idle', text: t('needBase') }
+      if (status === 'error') return { tone: 'error', text: (site.error && site.error.message) || t('failed') }
+      return { tone: 'idle', text: String(status) }
+    }
+
     function RelayBalanceCard(props) {
       const fallback = (key) => key
       const t = typeof props.t === 'function' ? props.t : fallback
@@ -716,14 +777,18 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         left: window.innerWidth - 218,
         top: Math.max(88, Math.round(window.innerHeight * 0.16)),
       })
-      const sign = currencySign(snapshot.currency || '')
+      // The card leads with the active site; the others are one tap away.
+      const sites = Array.isArray(snapshot.sites) ? snapshot.sites : []
+      const active = sites.find((site) => site.id === snapshot.activeId) || sites[0] || null
+
+      const sign = currencySign(active ? active.currency : '')
       const tab = card.tab === 'official' ? 'official' : 'relay'
       const official = officialSummary(snapshot.official)
-      const usage = snapshot.usage
-      const relayBalance = snapshot.balance
+      const usage = active ? active.usage : null
+      const relayBalance = active ? active.balance : null
       const updated = formatTime(snapshot.updatedAt)
-      const status = statusInfo(snapshot, t)
-      const relayError = snapshot.error && snapshot.error.message ? snapshot.error.message : null
+      const status = active ? siteStatusInfo(active, t) : statusInfo(snapshot, t)
+      const relayError = active && active.error && active.error.message ? active.error.message : null
 
       const relayAmount = relayBalance
         ? `${sign}${formatAmount(relayBalance.remaining)}`
@@ -744,7 +809,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
           ? precise(relayBalance.remaining)
           : usage ? precise(usage.amount) : ''
 
-      const stats = snapshot.stats
+      const stats = active ? active.stats : null
 
       const rows = (tab === 'official'
         ? [
@@ -795,17 +860,41 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
 
       const alerts = []
       if (tab === 'relay') {
-        if (snapshot.missing && snapshot.missing.apiBaseUrl) {
-          alerts.push(h('div', { className: 'rb-alert', key: 'base' }, t('needBase')))
-        } else if (snapshot.missing && snapshot.missing.session && !relayBalance) {
-          alerts.push(h('div', { className: 'rb-alert', key: 'session' }, t('needSession')))
+        if (active && active.low) {
+          alerts.push(h('div', { className: 'rb-alert', key: 'low', 'data-kind': 'warn' },
+            `${t('lowBalance')}${active.threshold > 0 ? ` (≤ ${active.threshold})` : ''}`))
         }
-        if (relayError) alerts.push(h('div', { className: 'rb-alert', key: 'err', 'data-kind': 'error' }, relayError))
+        if (!active) {
+          alerts.push(h('div', { className: 'rb-alert', key: 'base' }, t('needBase')))
+        } else if (active.status === 'idle' || !active.apiBaseUrl) {
+          alerts.push(h('div', { className: 'rb-alert', key: 'base' }, t('needBase')))
+        } else if (relayError) {
+          alerts.push(h('div', { className: 'rb-alert', key: 'err', 'data-kind': 'error' }, relayError))
+        }
       } else if (official.state === 'signed-out') {
         alerts.push(h('div', { className: 'rb-alert', key: 'signedout' }, t('officialSignedOutHint')))
       } else if (official.state === 'error') {
         alerts.push(h('div', { className: 'rb-alert', key: 'offerr', 'data-kind': 'error' }, t('failed')))
       }
+
+      // With more than one site, a chip row lets the card switch without a trip
+      // to the settings page.
+      const siteChips = tab === 'relay' && sites.length > 1
+        ? h('div', { className: 'rb-sites' }, ...sites.map((site) => h('button', {
+          type: 'button',
+          key: site.id,
+          className: 'rb-site-chip',
+          'data-active': site.id === (active ? active.id : '') ? 'true' : 'false',
+          'data-low': site.low ? 'true' : 'false',
+          title: site.apiBaseUrl || site.name,
+          onPointerDown: (event) => event.stopPropagation(),
+          onClick: () => request('/relay-balance/site', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action: 'activate', id: site.id }),
+          }).then(load).catch(() => {}),
+        }, site.name)))
+        : null
 
       const body = card.collapsed ? null : h('div', { className: 'rb-body' },
         h('div', { className: 'rb-tabs' },
@@ -824,6 +913,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
             onClick: () => updateCard({ tab: 'relay' }),
           }, t('relay')),
           h('span', { className: 'rb-updated' }, updated || t('never'))),
+        siteChips,
         h('div', { className: 'rb-amount', title: amountTitle || undefined },
           amountSign ? h('span', { className: 'rb-cur' }, amountSign) : null,
           h('span', { className: `rb-num${long ? ' rb-num--sm' : ''}` }, amountText),
@@ -881,22 +971,28 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       }, header, body)
     }
 
+    const EMPTY_FORM = {
+      name: '', apiBaseUrl: '', apiKey: '', cookie: '', accessToken: '',
+      userId: '', quotaPerUnit: '', currency: '', lowBalanceThreshold: '',
+    }
+
     function RelayBalanceSection(props) {
       const fallback = (key) => key
       const t = typeof props.t === 'function' ? props.t : fallback
       const card = useCard()
-      const [snapshot, setSnapshot] = React.useState({ status: 'loading', updatedAt: null })
-      const [form, setForm] = React.useState({ apiBaseUrl: '', apiKey: '', cookie: '', accessToken: '', userId: '', quotaPerUnit: '', currency: '' })
+      const [snapshot, setSnapshot] = React.useState({ status: 'loading', sites: [] })
+      // null = form closed, '' = adding a new site, otherwise the id being edited.
+      const [editingId, setEditingId] = React.useState(null)
+      const [form, setForm] = React.useState(EMPTY_FORM)
       const [busy, setBusy] = React.useState(false)
       const [notice, setNotice] = React.useState('')
-      // Result of the last explicit "test connection", or null before the first run.
       const [probe, setProbe] = React.useState(null)
 
       const load = React.useCallback(async () => {
         try {
           setSnapshot(await request('/relay-balance/state'))
         } catch (error) {
-          setSnapshot({ status: 'error', updatedAt: null, error: { message: String((error && error.message) || error) } })
+          setSnapshot({ status: 'error', updatedAt: null, sites: [], error: { message: String((error && error.message) || error) } })
         }
       }, [])
 
@@ -906,51 +1002,102 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         return () => clearInterval(timer)
       }, [load])
 
-      const quotaPerUnit = snapshot.credential ? snapshot.credential.quotaPerUnit : undefined
-      const savedBase = snapshot.credential ? snapshot.credential.apiBaseUrl : ''
-      React.useEffect(() => {
-        if (!quotaPerUnit && !savedBase) return
-        setForm((current) => {
-          const next = { ...current }
-          if (next.quotaPerUnit === '' && quotaPerUnit) next.quotaPerUnit = String(quotaPerUnit)
-          if (next.apiBaseUrl === '' && savedBase) next.apiBaseUrl = String(savedBase)
-          return next
+      const sites = Array.isArray(snapshot.sites) ? snapshot.sites : []
+      const active = sites.find((site) => site.id === snapshot.activeId) || sites[0] || null
+
+      const openEditor = (site) => {
+        setProbe(null)
+        setNotice('')
+        if (!site) {
+          setEditingId('')
+          setForm(EMPTY_FORM)
+          return
+        }
+        setEditingId(site.id)
+        setForm({
+          name: site.name || '',
+          apiBaseUrl: site.apiBaseUrl || '',
+          apiKey: '',
+          cookie: '',
+          accessToken: '',
+          userId: site.userId || '',
+          quotaPerUnit: site.quotaPerUnit ? String(site.quotaPerUnit) : '',
+          currency: site.currency || '',
+          lowBalanceThreshold: site.threshold ? String(site.threshold) : '',
         })
-      }, [quotaPerUnit, savedBase])
+      }
+
+      const closeEditor = () => {
+        setEditingId(null)
+        setProbe(null)
+        setNotice('')
+      }
 
       const update = (field) => (event) => {
         const value = event.target.value
         setForm((current) => ({ ...current, [field]: value }))
       }
 
+      const bodyFromForm = () => {
+        const body = {}
+        for (const field of ['name', 'apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency', 'lowBalanceThreshold']) {
+          const value = form[field].trim()
+          if (value !== '') body[field] = value
+        }
+        if (editingId !== null && editingId !== '') body.id = editingId
+        return body
+      }
+
       const save = async () => {
         setBusy(true)
         setNotice('')
         try {
-          const body = {}
-          for (const field of ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']) {
-            const value = form[field].trim()
-            if (value !== '') body[field] = value
-          }
-          if (Object.keys(body).length > 0) {
-            await request('/relay-balance/credential', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify(body),
-            })
-          }
-          const next = await request('/relay-balance/refresh', { method: 'POST' })
-          setSnapshot(next)
-          setForm({
-            apiBaseUrl: next.credential && next.credential.apiBaseUrl ? String(next.credential.apiBaseUrl) : '',
-            apiKey: '',
-            cookie: '',
-            accessToken: '',
-            userId: '',
-            quotaPerUnit: next.credential && next.credential.quotaPerUnit ? String(next.credential.quotaPerUnit) : '',
-            currency: next.credential && next.credential.currency ? String(next.credential.currency) : '',
+          const body = bodyFromForm()
+          body.action = 'save'
+          await request('/relay-balance/site', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
           })
           setNotice(t('saved'))
+          setEditingId(null)
+          setProbe(null)
+          await load()
+        } catch (error) {
+          setNotice(`${t('failed')}: ${String((error && error.message) || error)}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      // Probe the draft as typed, without saving it first.
+      const test = async () => {
+        setBusy(true)
+        setNotice('')
+        try {
+          const result = await request('/relay-balance/test', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(bodyFromForm()),
+          })
+          setProbe(result)
+        } catch (error) {
+          setProbe({ status: 'error', errors: [{ code: 'TEST_FAILED', message: String((error && error.message) || error) }] })
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const siteAction = async (action, id) => {
+        setBusy(true)
+        setNotice('')
+        try {
+          await request('/relay-balance/site', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action, id }),
+          })
+          await load()
         } catch (error) {
           setNotice(`${t('failed')}: ${String((error && error.message) || error)}`)
         } finally {
@@ -970,41 +1117,11 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         }
       }
 
-      // Saves what is typed, then re-probes the site from scratch and reports
-      // which credential fields it actually reads.
-      const test = async () => {
-        setBusy(true)
-        setNotice('')
-        try {
-          const body = {}
-          for (const field of ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']) {
-            const value = form[field].trim()
-            if (value !== '') body[field] = value
-          }
-          if (Object.keys(body).length > 0) {
-            await request('/relay-balance/credential', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify(body),
-            })
-          }
-          const result = await request('/relay-balance/test', { method: 'POST' })
-          setProbe(result)
-          setNotice('')
-          load()
-        } catch (error) {
-          setProbe({ status: 'error', errors: [{ code: 'TEST_FAILED', message: String((error && error.message) || error) }] })
-        } finally {
-          setBusy(false)
-        }
-      }
-
-      const credential = snapshot.credential || {}
-      const sign = currencySign(snapshot.currency || '')
-      const usage = snapshot.usage
-      const balance = snapshot.balance
+      const sign = currencySign(active ? active.currency : '')
+      const usage = active ? active.usage : null
+      const balance = active ? active.balance : null
       const updated = formatTime(snapshot.updatedAt)
-      const status = statusInfo(snapshot, t)
+      const status = active ? siteStatusInfo(active, t) : statusInfo(snapshot, t)
       const official = officialSummary(snapshot.official)
 
       const field = (key, label, hint, options) => h('div', { className: 'rb-field', key },
@@ -1028,6 +1145,93 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         h('span', { className: 'rb-hero-value', title: exact || undefined }, value),
         h('span', { className: 'rb-hero-note' }, note))
 
+      const siteRow = (site) => {
+        const siteSign = currencySign(site.currency)
+        const isActive = active && site.id === active.id
+        return h('div', {
+          className: 'rb-site-row',
+          key: site.id,
+          'data-active': isActive ? 'true' : 'false',
+          'data-low': site.low ? 'true' : 'false',
+        },
+          h('button', {
+            type: 'button',
+            className: 'rb-site-pick',
+            title: site.apiBaseUrl || site.name,
+            onClick: () => siteAction('activate', site.id),
+            disabled: busy,
+          },
+            h('span', { className: 'rb-dot', 'data-state': siteStatusInfo(site, t).tone }),
+            h('span', { className: 'rb-site-name' }, site.name),
+            h('span', { className: 'rb-site-bal' },
+              site.balance && site.balance.remaining !== null
+                ? `${siteSign}${formatAmount(site.balance.remaining)}`
+                : '—')),
+          site.low ? tag(t('lowBalance'), 'warn') : null,
+          h('button', {
+            type: 'button',
+            className: 'rb-btn rb-btn--mini',
+            onClick: () => openEditor(site),
+            disabled: busy,
+          }, t('edit')),
+          h('button', {
+            type: 'button',
+            className: 'rb-btn rb-btn--mini rb-btn--danger',
+            onClick: () => siteAction('delete', site.id),
+            disabled: busy,
+          }, t('remove')))
+      }
+
+      const editor = editingId === null ? null : h('div', { className: 'rb-editor' },
+        h('div', { className: 'rb-form' },
+          field('name', t('siteName'), t('siteNameHint'), { placeholder: active ? active.name : '' }),
+          field('apiBaseUrl', t('apiBaseUrl'), t('apiBaseUrlHint'), { placeholder: 'https://api.example.com' }),
+          field('apiKey', t('apiKey'), t('apiKeyHint'), { secret: true }),
+          field('accessToken', t('accessToken'), t('accessTokenHint'), { secret: true }),
+          field('cookie', t('cookie'), t('cookieHint'), { secret: true }),
+          field('lowBalanceThreshold', t('lowBalanceThreshold'), t('lowBalanceThresholdHint'), { placeholder: '10' }),
+          field('userId', t('userId'), t('userIdHint')),
+          field('quotaPerUnit', t('quotaPerUnit'), t('quotaPerUnitHint')),
+          field('currency', t('currency'), t('currencyHint'), { placeholder: 'CNY / USD' })),
+        h('div', { className: 'rb-actions' },
+          h('button', {
+            type: 'button',
+            className: 'rb-btn rb-btn--primary',
+            onClick: save,
+            disabled: busy,
+          }, busy ? t('saving') : t('save')),
+          h('button', { type: 'button', className: 'rb-btn', onClick: test, disabled: busy }, t('test')),
+          h('button', { type: 'button', className: 'rb-btn', onClick: closeEditor, disabled: busy }, t('cancel')),
+          notice ? h('span', { className: 'rb-hint' }, notice) : null),
+        probe ? h('div', { className: 'rb-probe' },
+          h('div', { className: 'rb-probe-head' },
+            h('span', { className: 'rb-dot', 'data-state': probe.providerLabel ? 'ok' : 'error' }),
+            h('b', null, probe.providerLabel
+              ? `${t('detected')}: ${probe.providerLabel}`
+              : t('notDetected'))),
+          probe.account ? h('div', { className: 'rb-probe-row' }, `${t('account')}: ${probe.account}`) : null,
+          probe.uses && probe.uses.length > 0
+            ? h('div', { className: 'rb-probe-row' },
+              `${t('neededFields')}: ${probe.uses.map((key) => t(`field.${key}`) || key).join('、')}`)
+            : null,
+          probe.optional && probe.optional.length > 0
+            ? h('div', { className: 'rb-probe-row rb-probe-muted' },
+              `${t('optionalFields')}: ${probe.optional.map((key) => t(`field.${key}`) || key).join('、')}`)
+            : null,
+          probe.providerLabel
+            ? h('div', { className: 'rb-probe-row rb-probe-muted' },
+              `${t('readable')}: ${[
+                probe.hasBalance ? t('balance') : null,
+                probe.hasUsage ? t('usage') : null,
+              ].filter(Boolean).join(' + ') || '—'}`)
+            : null,
+          (probe.errors || []).length > 0
+            ? h('div', { className: 'rb-probe-row rb-probe-error' }, probe.errors[0].message)
+            : null,
+          probe.providerLabel && probe.status !== 'ok'
+            ? h('div', { className: 'rb-probe-row rb-probe-muted' }, t('partialHint'))
+            : null) : null)
+
       return h('div', { className: 'rb-page' },
         h('p', { className: 'rb-lead' }, t('hint')),
 
@@ -1041,7 +1245,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
               official.exact),
             h('div', { className: 'rb-hero-sep' }),
             heroCell(t('relayBalance'), balance ? `${sign}${formatAmount(balance.remaining)}` : '—',
-              usage ? `${t('used')} ${sign}${formatAmount(usage.amount)}` : t('needSession'),
+              active ? active.name : t('noSites'),
               balance && balance.remaining !== null ? `${sign}${formatPrecise(balance.remaining)}` : '')),
           h('div', { className: 'rb-list' },
             h('div', { className: 'rb-item' },
@@ -1061,12 +1265,12 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
             h('div', { className: 'rb-item' },
               h('span', { className: 'rb-item-k' }, t('provider')),
               h('span', { className: 'rb-item-v' },
-                snapshot.providerLabel
-                  ? tag(snapshot.providerLabel, 'ok')
-                  : tag(snapshot.provider ? snapshot.provider : t('providerUnknown'),
-                    snapshot.status === 'ok' || snapshot.status === 'partial' ? 'muted' : 'warn'),
-                snapshot.account ? ' ' : null,
-                snapshot.account ? tag(snapshot.account, 'muted') : null)),
+                active && active.providerLabel
+                  ? tag(active.providerLabel, 'ok')
+                  : tag(active && active.provider ? active.provider : t('providerUnknown'),
+                    active && (active.status === 'ok' || active.status === 'partial') ? 'muted' : 'warn'),
+                active && active.account ? ' ' : null,
+                active && active.account ? tag(active.account, 'muted') : null)),
             h('div', { className: 'rb-item' },
               h('span', { className: 'rb-item-k' }, t('runtime')),
               h('span', { className: 'rb-item-v' },
@@ -1074,14 +1278,23 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
                 '  ',
                 tag(blurSupport() ? t('blurYes') : t('blurNo'), blurSupport() ? 'ok' : 'warn'),
                 ' ',
-                tag(glassSupported() ? t('refractYes') : t('refractNo'), glassSupported() ? 'ok' : 'muted'))),
-            h('div', { className: 'rb-item' },
-              h('span', { className: 'rb-item-k' }, t('credential')),
-              h('span', { className: 'rb-item-v' },
-                tag(`${t('apiKey')} · ${credential.hasApiKey ? t('configured') : t('notConfigured')}`, credential.hasApiKey ? 'ok' : 'warn'),
-                '  ',
-                tag(`${t('cookie')} · ${credential.hasCookie || credential.hasAccessToken ? t('configured') : t('notConfigured')}`,
-                  credential.hasCookie || credential.hasAccessToken ? 'ok' : 'warn'))))),
+                tag(glassSupported() ? t('refractYes') : t('refractNo'), glassSupported() ? 'ok' : 'muted'))))),
+
+        h('section', { className: 'rb-section' },
+          h('div', { className: 'rb-headline' }, t('sitesSection')),
+          sites.length === 0
+            ? h('p', { className: 'rb-hint' }, t('noSitesHint'))
+            : h('div', { className: 'rb-site-list' }, ...sites.map(siteRow)),
+          h('div', { className: 'rb-actions' },
+            h('button', {
+              type: 'button',
+              className: 'rb-btn rb-btn--primary',
+              onClick: () => openEditor(null),
+              disabled: busy || editingId !== null,
+            }, t('addSite')),
+            h('button', { type: 'button', className: 'rb-btn', onClick: refresh, disabled: busy }, t('refresh')),
+            notice && editingId === null ? h('span', { className: 'rb-hint' }, notice) : null)),
+        editor,
 
         h('section', { className: 'rb-section' },
           h('div', { className: 'rb-headline' }, t('floatingSection')),
@@ -1096,57 +1309,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
                 'aria-label': t('cardShow'),
                 onClick: () => updateCard({ visible: !card.visible }),
               }, h('span', { className: 'rb-knob' })))),
-          h('p', { className: 'rb-hint' }, t('cardHint'))),
-
-        h('section', { className: 'rb-section' },
-          h('div', { className: 'rb-headline' }, t('credentialSection')),
-          h('div', { className: 'rb-form' },
-            field('apiBaseUrl', t('apiBaseUrl'), t('apiBaseUrlHint'), { placeholder: 'https://relay.example.com' }),
-            field('apiKey', t('apiKey'), t('apiKeyHint'), { secret: true }),
-            field('cookie', t('cookie'), t('cookieHint'), { secret: true }),
-            field('accessToken', t('accessToken'), t('accessTokenHint'), { secret: true }),
-            field('userId', t('userId'), t('userIdHint')),
-            field('quotaPerUnit', t('quotaPerUnit'), t('quotaPerUnitHint')),
-            field('currency', t('currency'), t('currencyHint'), { placeholder: 'CNY / USD' })),
-          h('div', { className: 'rb-actions' },
-            h('button', {
-              type: 'button',
-              className: 'rb-btn rb-btn--primary',
-              onClick: save,
-              disabled: busy,
-            }, busy ? t('saving') : t('save')),
-            h('button', { type: 'button', className: 'rb-btn', onClick: test, disabled: busy }, t('test')),
-            h('button', { type: 'button', className: 'rb-btn', onClick: refresh, disabled: busy }, t('refresh')),
-            notice ? h('span', { className: 'rb-hint' }, notice) : null)),
-          probe ? h('div', { className: 'rb-probe' },
-            h('div', { className: 'rb-probe-head' },
-              h('span', { className: 'rb-dot', 'data-state': probe.providerLabel ? 'ok' : 'error' }),
-              h('b', null, probe.providerLabel
-                ? `${t('detected')}: ${probe.providerLabel}`
-                : t('notDetected'))),
-            probe.account ? h('div', { className: 'rb-probe-row' }, `${t('account')}: ${probe.account}`) : null,
-            // Which fields this site reads, so the form stops being guesswork.
-            probe.uses && probe.uses.length > 0
-              ? h('div', { className: 'rb-probe-row' },
-                `${t('neededFields')}: ${probe.uses.map((key) => t(`field.${key}`) || key).join('、')}`)
-              : null,
-            probe.optional && probe.optional.length > 0
-              ? h('div', { className: 'rb-probe-row rb-probe-muted' },
-                `${t('optionalFields')}: ${probe.optional.map((key) => t(`field.${key}`) || key).join('、')}`)
-              : null,
-            probe.providerLabel
-              ? h('div', { className: 'rb-probe-row rb-probe-muted' },
-                `${t('readable')}: ${[
-                  probe.hasBalance ? t('balance') : null,
-                  probe.hasUsage ? t('usage') : null,
-                ].filter(Boolean).join(' + ') || '—'}`)
-              : null,
-            (probe.errors || []).length > 0
-              ? h('div', { className: 'rb-probe-row rb-probe-error' }, probe.errors[0].message)
-              : null,
-            probe.providerLabel && probe.status !== 'ok'
-              ? h('div', { className: 'rb-probe-row rb-probe-muted' }, t('partialHint'))
-              : null) : null)
+          h('p', { className: 'rb-hint' }, t('cardHint'))))
     }
 
     return {
