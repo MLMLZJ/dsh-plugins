@@ -538,8 +538,11 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.7.1'
+    const MODULE_VERSION = '3.8.0'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
+    // A trackpad flick fires dozens of wheel events; without a cooldown one
+    // gesture would race through every page in a single stroke.
+    const WHEEL_COOLDOWN_MS = 300
 
     function blurSupport() {
       try {
@@ -783,15 +786,60 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         return mountLiquidGlass(element)
       }, [card.visible])
 
+      // The card leads with the active site; the others are one page away.
+      const sites = Array.isArray(snapshot.sites) ? snapshot.sites : []
+      const active = sites.find((site) => site.id === snapshot.activeId) || sites[0] || null
+      const siteIndex = active ? Math.max(0, sites.findIndex((site) => site.id === active.id)) : 0
+
+      // Turning the page updates the local snapshot first so the flip reads as
+      // instant, then persists the choice on the Host.
+      const flipTo = (nextIndex) => {
+        if (sites.length < 2) return
+        const bounded = (nextIndex + sites.length) % sites.length
+        const target = sites[bounded]
+        if (!target || (active && target.id === active.id)) return
+        setSnapshot((current) => ({ ...current, activeId: target.id }))
+        request('/relay-balance/site', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'activate', id: target.id }),
+        }).then(load).catch(() => load())
+      }
+
+      // Wheel flipping goes through refs so one native listener always sees the
+      // current page and never needs re-binding when the site list changes.
+      const wheelRef = React.useRef({ enabled: false, index: 0, at: 0 })
+      const flipRef = React.useRef(flipTo)
+      flipRef.current = flipTo
+      wheelRef.current.enabled = card.visible && card.tab !== 'official' && sites.length > 1
+      wheelRef.current.index = siteIndex
+
+      React.useEffect(() => {
+        const element = cardRef.current
+        if (!element) return undefined
+        const onWheel = (event) => {
+          const state = wheelRef.current
+          if (!state.enabled) return
+          // Trackpads report both axes; take whichever the gesture leans on.
+          const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+          if (!delta) return
+          // The card floats above the page, so a scroll here must not move it.
+          event.preventDefault()
+          const now = Date.now()
+          if (now - state.at < WHEEL_COOLDOWN_MS) return
+          state.at = now
+          flipRef.current(state.index + (delta > 0 ? 1 : -1))
+        }
+        element.addEventListener('wheel', onWheel, { passive: false })
+        return () => element.removeEventListener('wheel', onWheel)
+      }, [card.visible])
+
       if (!card.visible) return null
 
       const initial = position || clamp({
         left: window.innerWidth - 218,
         top: Math.max(88, Math.round(window.innerHeight * 0.16)),
       })
-      // The card leads with the active site; the others are one tap away.
-      const sites = Array.isArray(snapshot.sites) ? snapshot.sites : []
-      const active = sites.find((site) => site.id === snapshot.activeId) || sites[0] || null
 
       const sign = currencySign(active ? active.currency : '')
       const tab = card.tab === 'official' ? 'official' : 'relay'
@@ -887,23 +935,6 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
         alerts.push(h('div', { className: 'rb-alert', key: 'signedout' }, t('officialSignedOutHint')))
       } else if (official.state === 'error') {
         alerts.push(h('div', { className: 'rb-alert', key: 'offerr', 'data-kind': 'error' }, t('failed')))
-      }
-
-      // Page-flip navigation: the card shows one site at a time, with arrows and
-      // dots to turn the page. Switching updates the local snapshot first so the
-      // flip feels instant, then persists the choice on the Host.
-      const siteIndex = active ? Math.max(0, sites.findIndex((site) => site.id === active.id)) : 0
-      const flipTo = (nextIndex) => {
-        if (sites.length < 2) return
-        const bounded = (nextIndex + sites.length) % sites.length
-        const target = sites[bounded]
-        if (!target || (active && target.id === active.id)) return
-        setSnapshot((current) => ({ ...current, activeId: target.id }))
-        request('/relay-balance/site', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ action: 'activate', id: target.id }),
-        }).then(load).catch(() => load())
       }
 
       const sitePager = tab === 'relay' && sites.length > 1

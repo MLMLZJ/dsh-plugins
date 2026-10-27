@@ -50,7 +50,7 @@ const SITE_FIELDS = [
 const LEGACY_FIELDS = ['apiBaseUrl', 'apiKey', 'cookie', 'accessToken', 'userId', 'quotaPerUnit', 'currency']
 
 const MAX_BODY_BYTES = 16 * 1024
-const PLUGIN_VERSION = '3.7.1'
+const PLUGIN_VERSION = '3.8.0'
 const STORE_VERSION = 2
 
 function stateRoot() {
