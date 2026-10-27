@@ -538,7 +538,7 @@ body[data-ds-dark-theme] .rb-card::after{opacity:.055;mix-blend-mode:soft-light}
       h('circle', { key: '6', cx: 6, cy: 10, r: 1.1 }),
     ])
 
-    const MODULE_VERSION = '3.7.0'
+    const MODULE_VERSION = '3.7.1'
     const CARD_KEY = 'dsh.relay-balance.card.v1'
 
     function blurSupport() {
